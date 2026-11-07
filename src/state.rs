@@ -238,8 +238,6 @@ impl AppState {
         let default_model = self.config.default_model.clone();
         let title = format!("#{} (Casual)", channel_name);
 
-        let system_instructions = "[System instructions: Be conversational, natural and human-like. Do not use rigid markdown formatting, bulleted lists, headers, or robotic grammar. Keep your responses concise unless specifically asked otherwise.]".to_string();
-
         let create_args = CreateChatArgs {
             kind: Some("chat".to_string()),
             title: Some(title.clone()),
@@ -247,14 +245,12 @@ impl AppState {
             cwd: None,
             harness: Some(default_harness.clone()),
             model: default_model.clone(),
-            prompt: Some(system_instructions),
-            wait: Some(false),
             ..Default::default()
         };
 
         let resp = self.zeron.create_chat(create_args).await?;
 
-        // Archive session without project as specified
+        // Archive session without project as specified in Requirement 2a
         let _ = self.zeron.archive_chat(&resp.chat_id, true).await;
 
         let now = current_timestamp();

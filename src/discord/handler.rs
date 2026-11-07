@@ -8,6 +8,32 @@ use serenity::all::{
 };
 use tracing::{debug, error, info, warn};
 
+fn extract_text_only(raw_content: &str) -> String {
+    let mut words = Vec::new();
+    for word in raw_content.split_whitespace() {
+        let lower = word.to_lowercase();
+        if lower.starts_with("http://") || lower.starts_with("https://") {
+            let is_media_url = lower.contains("cdn.discordapp.com/attachments")
+                || lower.contains("media.discordapp.net/attachments")
+                || lower.contains("tenor.com")
+                || lower.contains("giphy.com")
+                || lower.ends_with(".png")
+                || lower.ends_with(".jpg")
+                || lower.ends_with(".jpeg")
+                || lower.ends_with(".gif")
+                || lower.ends_with(".webp")
+                || lower.ends_with(".mp4")
+                || lower.ends_with(".webm")
+                || lower.ends_with(".mov");
+            if is_media_url {
+                continue;
+            }
+        }
+        words.push(word);
+    }
+    words.join(" ")
+}
+
 pub struct Handler {
     pub state: AppState,
 }
@@ -294,9 +320,9 @@ impl EventHandler for Handler {
 
             let mut context_msgs: Vec<(String, String)> = Vec::new();
             for m in history.into_iter().rev() {
-                let trimmed = m.content.trim().to_string();
-                if !trimmed.is_empty() {
-                    context_msgs.push((m.author.name, trimmed));
+                let text_only = extract_text_only(&m.content);
+                if !text_only.is_empty() {
+                    context_msgs.push((m.author.name, text_only));
                 }
             }
 
@@ -305,10 +331,11 @@ impl EventHandler for Handler {
                 .map(|(a, t)| (a.as_str(), t.as_str()))
                 .collect();
 
+            let text_content = extract_text_only(content);
             let should_respond = self
                 .state
                 .decision
-                .should_respond(&context_refs, content)
+                .should_respond(&context_refs, &text_content)
                 .await;
 
             if !should_respond {
@@ -338,7 +365,8 @@ impl EventHandler for Handler {
             content.to_string()
         };
 
-        if clean_prompt.is_empty() {
+        let clean_text_prompt = extract_text_only(&clean_prompt);
+        if clean_text_prompt.is_empty() {
             return;
         }
 
@@ -372,6 +400,7 @@ impl EventHandler for Handler {
             }
         };
 
+        let is_first_tag_turn = session.origin == SessionOrigin::Tag && session.created_at == session.last_active_at;
         self.state.touch_session(channel_id).await;
 
         let typing = msg.channel_id.start_typing(&ctx.http);
@@ -381,7 +410,14 @@ impl EventHandler for Handler {
             msg.author.name, session.chat_id, session.origin, session.kind
         );
 
-        let formatted_user_msg = format!("{}: {}", msg.author.name, clean_prompt);
+        let formatted_user_msg = if is_first_tag_turn {
+            format!(
+                "[System instruction: Be conversational, natural and human-like. Do not use rigid formatting, bulleted lists, headers, or robotic grammar. Look like human generated, and send concise messages only unless asked otherwise.]\n\n{}: {}",
+                msg.author.name, clean_text_prompt
+            )
+        } else {
+            format!("{}: {}", msg.author.name, clean_text_prompt)
+        };
 
         // Send to Zeron MCP
         let send_res = self
@@ -400,13 +436,15 @@ impl EventHandler for Handler {
                 let (reply_text, reasoning_opt) = match self
                     .state
                     .zeron
-                    .read_chat(&session.chat_id, 3, is_spawn_origin)
+                    .read_chat(&session.chat_id, 5, is_spawn_origin)
                     .await
                 {
                     Ok(transcript) => {
                         let mut assistant_texts = Vec::new();
                         let mut latest_reasoning = None;
 
+                        // Walk backwards from newest message to collect only the assistant's
+                        // response to the current turn (stopping when reaching the user message)
                         for m in transcript.messages.iter().rev() {
                             if let Some(role) = m.get("role").and_then(|r| r.as_str()) {
                                 if role == "assistant" {
@@ -414,7 +452,10 @@ impl EventHandler for Handler {
                                         if let Some(r) =
                                             m.get("reasoning").and_then(|r| r.as_str())
                                         {
-                                            latest_reasoning = Some(r.to_string());
+                                            let trimmed_r = r.trim();
+                                            if !trimmed_r.is_empty() {
+                                                latest_reasoning = Some(trimmed_r.to_string());
+                                            }
                                         }
                                     }
 
@@ -425,9 +466,13 @@ impl EventHandler for Handler {
                                     {
                                         assistant_texts.push(c.to_string());
                                     }
+                                } else if role == "user" {
+                                    break;
                                 }
                             }
                         }
+
+                        assistant_texts.reverse();
 
                         let txt = if !assistant_texts.is_empty() {
                             assistant_texts.join("\n\n")
@@ -454,7 +499,12 @@ impl EventHandler for Handler {
                         let trimmed = reasoning.trim();
                         if !trimmed.is_empty() {
                             for line in trimmed.lines() {
-                                full_output.push_str(&format!("-# {}\n", line));
+                                let l = line.trim();
+                                if l.is_empty() {
+                                    full_output.push_str("-# \n");
+                                } else {
+                                    full_output.push_str(&format!("-# {}\n", l));
+                                }
                             }
                             full_output.push_str("\n");
                         }

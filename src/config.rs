@@ -74,7 +74,7 @@ impl Config {
         let cloudflare_account_id = std::env::var("CLOUDFLARE_ACCOUNT_ID").ok();
         let cloudflare_api_token = std::env::var("CLOUDFLARE_API_TOKEN").ok();
         let cloudflare_model = std::env::var("CLOUDFLARE_MODEL")
-            .unwrap_or_else(|_| "@cf/meta/llama-3.1-8b-instruct".to_string());
+            .unwrap_or_else(|_| "@cf/cloudflare/clef-flash".to_string());
         let cloudflare_ai_endpoint = std::env::var("CLOUDFLARE_AI_ENDPOINT").ok();
 
         Ok(Self {

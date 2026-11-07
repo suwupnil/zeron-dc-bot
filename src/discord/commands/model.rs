@@ -46,18 +46,19 @@ pub async fn run(
 
     let channel_id = command.channel_id.get();
 
-    // Ensure session exists or create it
-    let session = match state.get_session(channel_id).await {
-        Some(_) => state.set_model(channel_id, model_name).await?,
-        None => {
-            let _ = state
-                .get_or_create_channel_session(
-                    channel_id,
-                    "general",
-                    command.guild_id.map(|g| g.get()),
-                )
+    // Verify session exists and is active (sessions should only be created via /spawn or @tag)
+    let existing = state.get_session(channel_id).await;
+    let session = match existing {
+        Some(s) if !s.is_closed => state.set_model(channel_id, model_name).await?,
+        _ => {
+            let resp = CreateInteractionResponseMessage::new().content(
+                "❌ No active Zeron session found for this channel.\n\
+                 Use `/spawn <directory>` to spawn a project session or tag the bot to start a conversation."
+            );
+            command
+                .create_response(&ctx.http, CreateInteractionResponse::Message(resp))
                 .await?;
-            state.set_model(channel_id, model_name).await?
+            return Ok(());
         }
     };
 

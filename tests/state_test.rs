@@ -18,7 +18,7 @@ fn make_test_config(storage_path: PathBuf) -> Config {
         session_storage_path: storage_path,
         cloudflare_account_id: None,
         cloudflare_api_token: None,
-        cloudflare_model: "@cf/meta/llama-3.1-8b-instruct".to_string(),
+        cloudflare_model: "@cf/cloudflare/clef-flash".to_string(),
         cloudflare_ai_endpoint: None,
     }
 }

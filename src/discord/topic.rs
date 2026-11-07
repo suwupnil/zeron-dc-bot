@@ -50,6 +50,8 @@ pub async fn get_available_skills_and_mcp(state: &AppState) -> (Vec<String>, Vec
         format!("{}/.zeron/skills", home),
         format!("{}/.config/skills", home),
         format!("{}/.gemini/config/skills", home),
+        format!("{}/.gemini/antigravity-cli/builtin/skills", home),
+        format!("{}/.codex/skills", home),
         "./skills".to_string(),
     ];
 
@@ -120,7 +122,7 @@ pub async fn update_channel_topic(
         .model
         .clone()
         .or_else(|| state.config.default_model.clone())
-        .unwrap_or_else(|| "default".to_string());
+        .unwrap_or_else(|| session.harness.clone());
 
     let first_line = format!("**Model: {}**", model_name);
 

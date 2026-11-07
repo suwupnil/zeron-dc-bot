@@ -40,6 +40,8 @@ async fn test_live_zeron_mcp_handshake_and_tools() {
         ..Default::default()
     };
     let chat = client.create_chat(create_args).await.expect("create_chat failed");
+    eprintln!("Created parent chat: {:?}", chat);
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     assert!(!chat.chat_id.is_empty());
 
     // 6. Create a side chat branching from it
