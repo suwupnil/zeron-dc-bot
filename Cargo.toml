@@ -1,0 +1,28 @@
+[package]
+name = "zeron-dc-bot"
+version = "0.1.0"
+edition = "2021"
+authors = ["Suwu <swapnillcodes@gmail.com>"]
+description = "Discord bridge bot for local Zeron AI agent sessions and side-chat threads"
+license = "MIT"
+repository = "https://github.com/suwu/zeron-dc-bot"
+readme = "README.md"
+keywords = ["discord", "bot", "zeron", "ai-agents", "mcp"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model", "cache"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+dotenvy = "0.15"
+anyhow = "1.0"
+thiserror = "1.0"
+async-trait = "0.1"
+futures = "0.3"
+shellexpand = "3.1"
+
+[dev-dependencies]
+tempfile = "3.10"
