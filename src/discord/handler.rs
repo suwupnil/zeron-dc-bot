@@ -462,14 +462,30 @@ impl EventHandler for Handler {
                 }
                 full_output.push_str(&reply_text);
 
+                if full_output.trim().is_empty() {
+                    full_output = "*(Done)*".to_string();
+                }
+
+                let can_reference = matches!(
+                    msg.kind,
+                    serenity::all::MessageType::Regular | serenity::all::MessageType::InlineReply
+                );
+
                 let chunks = MessageChunker::split_message(&full_output, 1950);
                 for (i, chunk) in chunks.iter().enumerate() {
+                    if chunk.trim().is_empty() {
+                        continue;
+                    }
                     let mut create_msg = CreateMessage::new().content(chunk);
-                    if i == 0 {
+                    if i == 0 && can_reference {
                         create_msg = create_msg.reference_message(&msg);
                     }
                     if let Err(e) = msg.channel_id.send_message(&ctx.http, create_msg).await {
-                        error!("Failed to send Discord reply chunk: {}", e);
+                        warn!("Failed to send Discord reply with reference: {}. Retrying without reference...", e);
+                        let fallback_msg = CreateMessage::new().content(chunk);
+                        if let Err(fe) = msg.channel_id.send_message(&ctx.http, fallback_msg).await {
+                            error!("Failed to send Discord reply chunk: {}", fe);
+                        }
                     }
                 }
             }
