@@ -121,7 +121,23 @@ impl AppState {
         );
 
         let default_dir = self.config.default_project_dir.to_string_lossy().to_string();
-        let default_harness = self.config.default_harness.clone();
+        let default_harness = {
+            if let Ok(harnesses) = self.zeron.list_harnesses().await {
+                if harnesses.iter().any(|h| h.id == self.config.default_harness && h.connected) {
+                    self.config.default_harness.clone()
+                } else if let Some(connected) = harnesses.iter().find(|h| h.connected) {
+                    info!(
+                        "Configured harness '{}' is not connected; defaulting to connected harness '{}'",
+                        self.config.default_harness, connected.id
+                    );
+                    connected.id.clone()
+                } else {
+                    self.config.default_harness.clone()
+                }
+            } else {
+                self.config.default_harness.clone()
+            }
+        };
         let default_model = self.config.default_model.clone();
 
         let title = format!("#{} (Discord)", channel_name);
