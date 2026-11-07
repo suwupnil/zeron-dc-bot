@@ -35,15 +35,33 @@ impl EventHandler for Handler {
             help::register(),
         ];
 
+        let joined_guilds: Vec<u64> = ready.guilds.iter().map(|g| g.id.get()).collect();
+        info!("Bot is currently in {} guild(s): {:?}", joined_guilds.len(), joined_guilds);
+
         if let Some(guild_id_u64) = self.state.config.guild_id {
             let guild_id = GuildId::new(guild_id_u64);
+            if !joined_guilds.is_empty() && !joined_guilds.contains(&guild_id_u64) {
+                warn!(
+                    "Configured GUILD_ID ({}) is NOT in the list of joined guilds {:?}. Please verify that the bot has joined this server or that GUILD_ID is not a channel/user ID.",
+                    guild_id_u64, joined_guilds
+                );
+            }
+
             info!("Registering slash commands for development Guild: {}", guild_id);
-            match guild_id.set_commands(&ctx.http, commands).await {
+            match guild_id.set_commands(&ctx.http, commands.clone()).await {
                 Ok(registered) => {
                     info!("Registered {} guild slash commands successfully", registered.len());
                 }
                 Err(e) => {
-                    error!("Failed to register guild slash commands: {}", e);
+                    error!("Failed to register guild slash commands: {}. Attempting global registration fallback...", e);
+                    match serenity::all::Command::set_global_commands(&ctx.http, commands).await {
+                        Ok(registered) => {
+                            info!("Registered {} global slash commands as fallback", registered.len());
+                        }
+                        Err(ge) => {
+                            error!("Failed to register global slash commands: {}", ge);
+                        }
+                    }
                 }
             }
         } else {
