@@ -42,6 +42,10 @@ impl MessageChunker {
 
             // If a single line itself is longer than max_len (e.g. long URL or minified code)
             if line.len() > max_len {
+                if !current_chunk.is_empty() {
+                    chunks.push(current_chunk);
+                    current_chunk = String::new();
+                }
                 let mut start = 0;
                 while start < line.len() {
                     let end = std::cmp::min(start + max_len, line.len());

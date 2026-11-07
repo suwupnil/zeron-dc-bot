@@ -132,13 +132,13 @@ APPLICATION_ID=your_application_id_here
 # Optional: Specific Guild ID for instantaneous slash command registration during development
 GUILD_ID=your_guild_id_here
 
-# Local Zeron Daemon
-ZERON_PATH=/Applications/Zeron.app/Contents/MacOS/zeron
+# Local Zeron Daemon (Linux VM or macOS)
+ZERON_PATH=zeron
 
 # Default Agent Settings
 DEFAULT_HARNESS=codex
 DEFAULT_MODEL=gpt-6.1-sol
-DEFAULT_PROJECT_DIR=/Users/swap/Developer
+DEFAULT_PROJECT_DIR=/home/ubuntu/projects
 
 # Behavior
 AUTO_CREATE_SESSIONS=true
@@ -151,17 +151,55 @@ RUST_LOG=info
 
 ### Step 3: Build & Run
 
-Run the bot locally:
+Run the bot:
 
 ```bash
-# Check code
+# Check compilation
 cargo check
 
-# Run tests (includes live Zeron MCP integration tests)
+# Run all unit and integration tests
 cargo test
 
-# Launch the bot
+# Launch the bot in release mode
 cargo run --release
+```
+
+---
+
+### 🖥️ Running on a Linux VM (systemd Service)
+
+To run the bot as a persistent daemon on your Ubuntu / Debian VM:
+
+1. Build the release binary:
+```bash
+cargo build --release
+sudo cp target/release/zeron-dc-bot /usr/local/bin/
+```
+
+2. Create `/etc/systemd/system/zeron-dc-bot.service`:
+```ini
+[Unit]
+Description=Zeron Discord Bridge Bot
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/zeron-dc-bot
+EnvironmentFile=/home/ubuntu/zeron-dc-bot/.env
+ExecStart=/usr/local/bin/zeron-dc-bot
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+3. Enable and start the service:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now zeron-dc-bot
+sudo systemctl status zeron-dc-bot
 ```
 
 ---

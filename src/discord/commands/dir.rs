@@ -142,8 +142,8 @@ pub async fn autocomplete(
     let expanded = shellexpand::tilde(current_input).to_string();
     let current_path = Path::new(&expanded);
 
-    let (dir_to_scan, prefix) = if expanded.is_empty() {
-        (PathBuf::from("/Users/swap/Developer"), "")
+    let (dir_to_scan, prefix) = if current_input.is_empty() {
+        (state.config.default_project_dir.clone(), "")
     } else if current_path.is_dir() {
         (current_path.to_path_buf(), "")
     } else {
@@ -175,8 +175,10 @@ pub async fn autocomplete(
 
     // Default suggestions if list is empty
     if suggestions.is_empty() {
-        suggestions.push("/Users/swap/Developer".to_string());
         suggestions.push(state.config.default_project_dir.to_string_lossy().to_string());
+        if let Ok(cwd) = std::env::current_dir() {
+            suggestions.push(cwd.to_string_lossy().to_string());
+        }
     }
 
     suggestions.sort();

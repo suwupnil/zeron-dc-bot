@@ -114,9 +114,12 @@ pub async fn autocomplete(
     let mut choices: Vec<AutocompleteChoice> = Vec::new();
 
     // 1. Scan filesystem for local skill folders if present
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
     let possible_skill_dirs = [
-        "/Users/swap/.gemini/config/skills",
-        "./skills",
+        format!("{}/.zeron/skills", home),
+        format!("{}/.config/skills", home),
+        format!("{}/.gemini/config/skills", home),
+        "./skills".to_string(),
     ];
 
     for dir in &possible_skill_dirs {
