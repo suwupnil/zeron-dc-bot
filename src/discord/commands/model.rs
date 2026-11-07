@@ -61,6 +61,9 @@ pub async fn run(
         }
     };
 
+    // Update channel topic to reflect newly selected model on first line
+    let _ = crate::discord::topic::update_channel_topic(ctx, channel_id, state).await;
+
     let resp_text = format!(
         "🤖 **Model Updated**\n- **Session:** `{}`\n- **Harness:** `{}`\n- **Active Model:** `{}`\n- **Kind:** `{}`",
         session.chat_id,

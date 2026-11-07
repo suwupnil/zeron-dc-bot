@@ -376,12 +376,17 @@ impl ZeronClient {
     }
 
     /// Read transcript messages from a chat
-    pub async fn read_chat(&self, chat_id: &str, limit: u32) -> BotResult<ReadChatResponse> {
+    pub async fn read_chat(
+        &self,
+        chat_id: &str,
+        limit: u32,
+        include_reasoning: bool,
+    ) -> BotResult<ReadChatResponse> {
         let args = ReadChatArgs {
             chat: chat_id.to_string(),
             limit: Some(limit),
             offset: Some(0),
-            include_reasoning: Some(false),
+            include_reasoning: Some(include_reasoning),
             include_tools: Some(true),
         };
         let val = serde_json::to_value(&args)?;
@@ -409,9 +414,9 @@ impl ZeronClient {
         Ok(())
     }
 
-    /// Archive a chat
-    pub async fn archive_chat(&self, chat_id: &str) -> BotResult<()> {
-        let args = serde_json::json!({ "chat": chat_id });
+    /// Archive or unarchive a chat
+    pub async fn archive_chat(&self, chat_id: &str, archived: bool) -> BotResult<()> {
+        let args = serde_json::json!({ "chat": chat_id, "archived": archived });
         let _ = self.call_tool("archive_chat", args).await?;
         Ok(())
     }

@@ -13,6 +13,10 @@ pub struct Config {
     pub auto_create_sessions: bool,
     pub command_prefix: String,
     pub session_storage_path: PathBuf,
+    pub cloudflare_account_id: Option<String>,
+    pub cloudflare_api_token: Option<String>,
+    pub cloudflare_model: String,
+    pub cloudflare_ai_endpoint: Option<String>,
 }
 
 impl Config {
@@ -67,6 +71,12 @@ impl Config {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("./sessions.json"));
 
+        let cloudflare_account_id = std::env::var("CLOUDFLARE_ACCOUNT_ID").ok();
+        let cloudflare_api_token = std::env::var("CLOUDFLARE_API_TOKEN").ok();
+        let cloudflare_model = std::env::var("CLOUDFLARE_MODEL")
+            .unwrap_or_else(|_| "@cf/meta/llama-3.1-8b-instruct".to_string());
+        let cloudflare_ai_endpoint = std::env::var("CLOUDFLARE_AI_ENDPOINT").ok();
+
         Ok(Self {
             discord_token,
             application_id,
@@ -78,6 +88,10 @@ impl Config {
             auto_create_sessions,
             command_prefix,
             session_storage_path,
+            cloudflare_account_id,
+            cloudflare_api_token,
+            cloudflare_model,
+            cloudflare_ai_endpoint,
         })
     }
 }

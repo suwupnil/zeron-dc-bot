@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::decision::DecisionClient;
 use crate::error::{BotError, BotResult};
 use crate::zeron::models::CreateChatArgs;
 use crate::zeron::ZeronClient;
@@ -15,6 +16,20 @@ fn current_timestamp() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SessionOrigin {
+    #[serde(rename = "spawn")]
+    Spawn,
+    #[serde(rename = "tag")]
+    Tag,
+}
+
+impl Default for SessionOrigin {
+    fn default() -> Self {
+        SessionOrigin::Spawn
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,12 +50,17 @@ pub struct SessionData {
     pub model: Option<String>,
     pub created_at: u64,
     pub last_active_at: u64,
+    #[serde(default)]
+    pub origin: SessionOrigin,
+    #[serde(default)]
+    pub is_closed: bool,
 }
 
 #[derive(Clone)]
 pub struct AppState {
     pub config: Config,
     pub zeron: ZeronClient,
+    pub decision: DecisionClient,
     pub sessions: Arc<RwLock<HashMap<u64, SessionData>>>,
     storage_path: PathBuf,
 }
@@ -48,9 +68,16 @@ pub struct AppState {
 impl AppState {
     pub fn new(config: Config, zeron: ZeronClient) -> Self {
         let storage_path = config.session_storage_path.clone();
+        let decision = DecisionClient::new(
+            config.cloudflare_account_id.clone(),
+            config.cloudflare_api_token.clone(),
+            config.cloudflare_model.clone(),
+            config.cloudflare_ai_endpoint.clone(),
+        );
         Self {
             config,
             zeron,
+            decision,
             sessions: Arc::new(RwLock::new(HashMap::new())),
             storage_path,
         }
@@ -69,10 +96,16 @@ impl AppState {
                         let count = loaded.len();
                         let mut map = self.sessions.write().await;
                         *map = loaded;
-                        info!("Restored {} Discord-Zeron session mappings from {:?}", count, self.storage_path);
+                        info!(
+                            "Restored {} Discord-Zeron session mappings from {:?}",
+                            count, self.storage_path
+                        );
                     }
                     Err(e) => {
-                        warn!("Failed to deserialize session state file {:?}: {}", self.storage_path, e);
+                        warn!(
+                            "Failed to deserialize session state file {:?}: {}",
+                            self.storage_path, e
+                        );
                     }
                 }
             }
@@ -101,51 +134,51 @@ impl AppState {
         map.get(&channel_id).cloned()
     }
 
-    /// Get or create a main Zeron chat session for a text channel
-    pub async fn get_or_create_channel_session(
+    /// Determine active or connected harness
+    pub async fn resolve_harness(&self) -> String {
+        if let Ok(harnesses) = self.zeron.list_harnesses().await {
+            if harnesses.iter().any(|h| h.id == self.config.default_harness && h.connected) {
+                self.config.default_harness.clone()
+            } else if let Some(connected) = harnesses.iter().find(|h| h.connected) {
+                connected.id.clone()
+            } else {
+                self.config.default_harness.clone()
+            }
+        } else {
+            self.config.default_harness.clone()
+        }
+    }
+
+    /// Spawn a project session assigned to a specific directory (via `/spawn`)
+    pub async fn spawn_project_session(
         &self,
         channel_id: u64,
         channel_name: &str,
         guild_id: Option<u64>,
+        project_dir: &str,
     ) -> BotResult<SessionData> {
-        {
-            let map = self.sessions.read().await;
-            if let Some(session) = map.get(&channel_id) {
-                return Ok(session.clone());
-            }
+        // If an old session existed, archive it
+        let old_chat_id = {
+            let mut map = self.sessions.write().await;
+            map.remove(&channel_id).map(|s| s.chat_id)
+        };
+        if let Some(old_id) = old_chat_id {
+            let _ = self.zeron.archive_chat(&old_id, true).await;
         }
 
         info!(
-            "Initializing new Zeron session for text channel #{} ({})",
-            channel_name, channel_id
+            "Spawning new project Zeron session for #{} ({}) in directory {}",
+            channel_name, channel_id, project_dir
         );
 
-        let default_dir = self.config.default_project_dir.to_string_lossy().to_string();
-        let default_harness = {
-            if let Ok(harnesses) = self.zeron.list_harnesses().await {
-                if harnesses.iter().any(|h| h.id == self.config.default_harness && h.connected) {
-                    self.config.default_harness.clone()
-                } else if let Some(connected) = harnesses.iter().find(|h| h.connected) {
-                    info!(
-                        "Configured harness '{}' is not connected; defaulting to connected harness '{}'",
-                        self.config.default_harness, connected.id
-                    );
-                    connected.id.clone()
-                } else {
-                    self.config.default_harness.clone()
-                }
-            } else {
-                self.config.default_harness.clone()
-            }
-        };
+        let default_harness = self.resolve_harness().await;
         let default_model = self.config.default_model.clone();
-
-        let title = format!("#{} (Discord)", channel_name);
+        let title = format!("#{} (Project)", channel_name);
 
         let create_args = CreateChatArgs {
             kind: Some("chat".to_string()),
             title: Some(title.clone()),
-            cwd: Some(default_dir.clone()),
+            cwd: Some(project_dir.to_string()),
             harness: Some(default_harness.clone()),
             model: default_model.clone(),
             ..Default::default()
@@ -162,11 +195,13 @@ impl AppState {
             parent_channel_id: None,
             guild_id,
             title,
-            project_dir: default_dir,
+            project_dir: project_dir.to_string(),
             harness: default_harness,
             model: default_model,
             created_at: now,
             last_active_at: now,
+            origin: SessionOrigin::Spawn,
+            is_closed: false,
         };
 
         {
@@ -174,8 +209,144 @@ impl AppState {
             map.insert(channel_id, session.clone());
         }
 
-        let _ = self.save_sessions().await;
+        self.save_sessions().await?;
         Ok(session)
+    }
+
+    /// Spawn a casual conversational session when tagged (@bot) without any project
+    pub async fn spawn_tag_session(
+        &self,
+        channel_id: u64,
+        channel_name: &str,
+        guild_id: Option<u64>,
+    ) -> BotResult<SessionData> {
+        // If an old session existed, archive it
+        let old_chat_id = {
+            let mut map = self.sessions.write().await;
+            map.remove(&channel_id).map(|s| s.chat_id)
+        };
+        if let Some(old_id) = old_chat_id {
+            let _ = self.zeron.archive_chat(&old_id, true).await;
+        }
+
+        info!(
+            "Spawning new casual tag Zeron session for #{} ({})",
+            channel_name, channel_id
+        );
+
+        let default_harness = self.resolve_harness().await;
+        let default_model = self.config.default_model.clone();
+        let title = format!("#{} (Casual)", channel_name);
+
+        let system_instructions = "[System instructions: Be conversational, natural and human-like. Do not use rigid markdown formatting, bulleted lists, headers, or robotic grammar. Keep your responses concise unless specifically asked otherwise.]".to_string();
+
+        let create_args = CreateChatArgs {
+            kind: Some("chat".to_string()),
+            title: Some(title.clone()),
+            project: None,
+            cwd: None,
+            harness: Some(default_harness.clone()),
+            model: default_model.clone(),
+            prompt: Some(system_instructions),
+            wait: Some(false),
+            ..Default::default()
+        };
+
+        let resp = self.zeron.create_chat(create_args).await?;
+
+        // Archive session without project as specified
+        let _ = self.zeron.archive_chat(&resp.chat_id, true).await;
+
+        let now = current_timestamp();
+
+        let session = SessionData {
+            chat_id: resp.chat_id,
+            kind: "chat".to_string(),
+            parent_chat_id: None,
+            channel_id,
+            parent_channel_id: None,
+            guild_id,
+            title,
+            project_dir: String::new(),
+            harness: default_harness,
+            model: default_model,
+            created_at: now,
+            last_active_at: now,
+            origin: SessionOrigin::Tag,
+            is_closed: false,
+        };
+
+        {
+            let mut map = self.sessions.write().await;
+            map.insert(channel_id, session.clone());
+        }
+
+        self.save_sessions().await?;
+        Ok(session)
+    }
+
+    /// Close active session and stop monitoring channel
+    pub async fn close_session(&self, channel_id: u64) -> BotResult<SessionData> {
+        let mut map = self.sessions.write().await;
+        let session = map.get_mut(&channel_id).ok_or_else(|| {
+            BotError::Session("No active session found for this channel".into())
+        })?;
+
+        if session.is_closed {
+            return Err(BotError::Session("Session is already closed".into()));
+        }
+
+        session.is_closed = true;
+        let chat_id = session.chat_id.clone();
+        let cloned = session.clone();
+        drop(map);
+
+        let _ = self.zeron.archive_chat(&chat_id, true).await;
+        self.save_sessions().await?;
+        Ok(cloned)
+    }
+
+    /// Resume monitoring a previously closed session
+    pub async fn resume_session(&self, channel_id: u64) -> BotResult<SessionData> {
+        let mut map = self.sessions.write().await;
+        let session = map.get_mut(&channel_id).ok_or_else(|| {
+            BotError::Session("No session found for this channel to resume".into())
+        })?;
+
+        if !session.is_closed {
+            return Err(BotError::Session("Session is already active".into()));
+        }
+
+        session.is_closed = false;
+        session.last_active_at = current_timestamp();
+        let chat_id = session.chat_id.clone();
+        let cloned = session.clone();
+        drop(map);
+
+        let _ = self.zeron.archive_chat(&chat_id, false).await;
+        self.save_sessions().await?;
+        Ok(cloned)
+    }
+
+    /// Get or create a main Zeron chat session (legacy/fallback helper)
+    pub async fn get_or_create_channel_session(
+        &self,
+        channel_id: u64,
+        channel_name: &str,
+        guild_id: Option<u64>,
+    ) -> BotResult<SessionData> {
+        {
+            let map = self.sessions.read().await;
+            if let Some(session) = map.get(&channel_id) {
+                if !session.is_closed {
+                    return Ok(session.clone());
+                }
+            }
+        }
+
+        let default_dir = self.config.default_project_dir.to_string_lossy().to_string();
+        self.spawn_project_session(channel_id, channel_name, guild_id, &default_dir)
+            .await
     }
 
     /// Get or create a side Zeron chat session for a Discord thread
@@ -184,21 +355,34 @@ impl AppState {
         thread_id: u64,
         thread_name: &str,
         parent_channel_id: u64,
-        parent_channel_name: Option<&str>,
+        _parent_channel_name: Option<&str>,
         guild_id: Option<u64>,
     ) -> BotResult<SessionData> {
         {
             let map = self.sessions.read().await;
             if let Some(session) = map.get(&thread_id) {
-                return Ok(session.clone());
+                if !session.is_closed {
+                    return Ok(session.clone());
+                }
             }
         }
 
-        // Ensure parent channel has an active session to branch from
-        let parent_name = parent_channel_name.unwrap_or("channel");
-        let parent_session = self
-            .get_or_create_channel_session(parent_channel_id, parent_name, guild_id)
-            .await?;
+        // Ensure parent channel has an active project session
+        let parent_session = self.get_session(parent_channel_id).await.ok_or_else(|| {
+            BotError::Session("Parent channel has no Zeron session to branch from".into())
+        })?;
+
+        if parent_session.is_closed {
+            return Err(BotError::Session(
+                "Parent channel session is closed; cannot fork side chat".into(),
+            ));
+        }
+
+        if parent_session.origin == SessionOrigin::Tag {
+            return Err(BotError::Session(
+                "Tag/casual sessions do not support side chats in threads".into(),
+            ));
+        }
 
         info!(
             "Forking side chat in Zeron for Discord thread '{}' ({}) from parent session {}",
@@ -233,6 +417,8 @@ impl AppState {
             model: parent_session.model,
             created_at: now,
             last_active_at: now,
+            origin: SessionOrigin::Spawn,
+            is_closed: false,
         };
 
         {
@@ -240,7 +426,7 @@ impl AppState {
             map.insert(thread_id, session.clone());
         }
 
-        let _ = self.save_sessions().await;
+        self.save_sessions().await?;
         Ok(session)
     }
 
@@ -256,7 +442,7 @@ impl AppState {
         let cloned = session.clone();
         drop(map);
 
-        let _ = self.save_sessions().await;
+        self.save_sessions().await?;
         Ok(cloned)
     }
 
@@ -272,7 +458,7 @@ impl AppState {
         let cloned = session.clone();
         drop(map);
 
-        let _ = self.save_sessions().await;
+        self.save_sessions().await?;
         Ok(cloned)
     }
 
@@ -291,7 +477,7 @@ impl AppState {
         };
 
         if let Some(old_id) = old_chat_id {
-            let _ = self.zeron.archive_chat(&old_id).await;
+            let _ = self.zeron.archive_chat(&old_id, true).await;
         }
 
         if is_thread {

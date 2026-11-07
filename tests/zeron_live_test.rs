@@ -51,6 +51,6 @@ async fn test_live_zeron_mcp_handshake_and_tools() {
     assert_eq!(side_chat.parent_chat_id, Some(chat.chat_id.clone()));
 
     // 7. Clean up by archiving both
-    let _ = client.archive_chat(&side_chat.chat_id).await;
-    let _ = client.archive_chat(&chat.chat_id).await;
+    let _ = client.archive_chat(&side_chat.chat_id, true).await;
+    let _ = client.archive_chat(&chat.chat_id, true).await;
 }

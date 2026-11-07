@@ -16,29 +16,33 @@ pub async fn run(
     let help_text = "\
 ### 🚀 Zeron Discord Bridge Bot
 
-This bot connects your Discord channels and threads to your local **Zeron** coding agents. All operations execute strictly on your target host VM/machine.
+Connect your Discord channels and threads to your local **Zeron** coding agents.
 
 ---
 #### 🛠️ Slash Commands
-- `/dir <path>`: Set the host VM project directory for this channel or thread (includes path validation & autocomplete).
-- `/model <name>`: Switch the AI model (shows dynamic autocompletions of all available models from `list_models`).
-- `/mcp <server>`: Attach an MCP server to this conversation.
-- `/skills <skill>`: Activate a specialized skill/workflow (Cloudflare, React best practices, HyperFrames, etc.).
-- `/status`: Inspect active chat session, model, harness, directory, and thread hierarchy.
-- `/reset`: Archive the current Zeron session and spawn a fresh one.
+- `/spawn <directory>`: Spawn a new project session linked to a host directory (creates directory if missing). Enables side chats, thought process tracking, and keeps channel topic populated with available Skills and MCP tools.
+- `/close`: End the current session and stop monitoring the channel.
+- `/resume`: Resume monitoring a previously closed session in this channel.
+- `/model <name>`: Switch the active AI model for this session (updates channel topic).
+- `/status`: Inspect active chat session, origin, model, harness, directory, and monitoring state.
 - `/interrupt`: Stop a running agent turn immediately.
 - `/help`: Show this guide.
 
 ---
-#### 🧵 Threads as Side Chats (Context Forking)
-- When you create a **Discord Thread** inside any text channel, the bot creates a **Zeron Side Chat** (`kind: side`, parent set to the channel's main chat).
-- The side chat **inherits full context** from the channel's main chat.
-- You can ask questions, run exploratory tasks, or refactor code in threads without polluting or interrupting the main session!
+#### 🤖 Session Types
+1. **Project Sessions (`/spawn <directory>`)**:
+   - Designed for software development and engineering workflows.
+   - Shows model thought process formatted as small text (`-#`).
+   - Dynamically updates channel topic with the active model, skills, and MCP tools.
+   - Supports context-forked side chats in Discord Threads.
+2. **Casual Sessions (Tagging `@bot`)**:
+   - Initialized the first time the bot is tagged in a channel without an active session.
+   - Operates conversationally and human-like without code project attachment.
 
 ---
-#### 💬 Chatting
-- Simply type a message in the channel or thread (or mention the bot).
-- The bot will display a typing indicator while Zeron is working, and post the assistant's replies formatted with syntax-highlighted code blocks.
+#### 🧠 Multi-User Decision Model
+- In multi-user channels, a decision model analyzes the last 10 messages to determine if a message asks for assistant help or if users are talking among themselves.
+- Explicitly tagging `@bot` or replying to the bot always guarantees an immediate response.
 ";
 
     let resp = CreateInteractionResponseMessage::new().content(help_text);

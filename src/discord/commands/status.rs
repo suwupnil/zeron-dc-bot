@@ -1,5 +1,5 @@
 use crate::error::BotResult;
-use crate::state::AppState;
+use crate::state::{AppState, SessionOrigin};
 use serenity::all::{
     CommandInteraction, Context, CreateCommand, CreateInteractionResponse,
     CreateInteractionResponseMessage,
@@ -7,7 +7,7 @@ use serenity::all::{
 
 pub fn register() -> CreateCommand {
     CreateCommand::new("status")
-        .description("View current Zeron session state, model, directory, and thread hierarchy")
+        .description("View current Zeron session state, model, directory, and monitoring status")
 }
 
 pub async fn run(
@@ -32,26 +32,49 @@ pub async fn run(
                 "\n- **Hierarchy:** Main Channel Chat".to_string()
             };
 
+            let origin_desc = match s.origin {
+                SessionOrigin::Spawn => "Project (/spawn) - side chats & thought process enabled",
+                SessionOrigin::Tag => "Casual (@tag) - conversational & human-like",
+            };
+
+            let monitor_status = if s.is_closed {
+                "🔴 Closed / Unmonitored (use `/resume` to re-enable)"
+            } else {
+                "🟢 Active / Monitored"
+            };
+
+            let decision_model_desc = if state.decision.is_configured() {
+                format!("Cloudflare Workers AI (`{}`)", state.decision.model)
+            } else {
+                "Fallback heuristic (Cloudflare unconfigured)".to_string()
+            };
+
             format!(
                 "📊 **Zeron Session Status**\n\
                  - **Chat ID:** `{}`\n\
+                 - **Origin:** {}\n\
+                 - **Monitoring:** {}\n\
                  - **Kind:** `{}`{}\n\
                  - **Live Status:** `{}`\n\
                  - **Harness:** `{}`\n\
                  - **Active Model:** `{}`\n\
                  - **Project Directory:** `{}`\n\
-                 - **Execution Target:** Local Host VM",
+                 - **Decision Model:** {}",
                 s.chat_id,
+                origin_desc,
+                monitor_status,
                 s.kind,
                 parent_info,
                 live_status,
                 s.harness,
                 s.model.as_deref().unwrap_or("harness default"),
-                s.project_dir
+                if s.project_dir.is_empty() { "None (Casual tag session)" } else { &s.project_dir },
+                decision_model_desc,
             )
         }
         None => {
-            "ℹ️ No active Zeron session for this channel yet. Send a message or use `/dir` to initialize one.".to_string()
+            "ℹ️ No Zeron session linked to this channel yet.\n\
+             Use `/spawn <directory>` to start a project session, or @mention the bot to start a casual conversation.".to_string()
         }
     };
 

@@ -2077,6 +2077,7 @@ dependencies = [
  "async-trait",
  "dotenvy",
  "futures",
+ "reqwest",
  "serde",
  "serde_json",
  "serenity",
