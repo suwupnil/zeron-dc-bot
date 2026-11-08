@@ -1,4 +1,6 @@
-use crate::discord::commands::{close, help, interrupt, model, resume, spawn, status};
+use crate::discord::commands::{
+    close, effort, help, interrupt, mcp, model, resume, skills, spawn, status,
+};
 use crate::discord::formatter::MessageChunker;
 use crate::discord::topic;
 use crate::state::{AppState, SessionOrigin};
@@ -56,6 +58,9 @@ impl EventHandler for Handler {
             close::register(),
             resume::register(),
             model::register(),
+            effort::register(),
+            skills::register(),
+            mcp::register(),
             status::register(),
             interrupt::register(),
             help::register(),
@@ -190,11 +195,33 @@ impl EventHandler for Handler {
                 let cmd_name = command.data.name.as_str();
                 debug!("Handling slash command: /{}", cmd_name);
 
+                // Check if channel has an active session
+                let channel_id = command.channel_id.get();
+                let existing_session = self.state.get_session(channel_id).await;
+                let has_active_session = existing_session.as_ref().map_or(false, |s| !s.is_closed);
+
+                // Requirement 4: Don't allow any command other than /spawn or /resume if no zeron session is linked
+                if !has_active_session && cmd_name != "spawn" && cmd_name != "resume" && cmd_name != "help" {
+                    let resp = serenity::all::CreateInteractionResponseMessage::new()
+                        .content(
+                            "❌ No active Zeron session linked with this channel.\n\
+                             Please use `/spawn <directory>` to start a new session or `/resume [session_id]` to resume one.",
+                        )
+                        .ephemeral(true);
+                    let _ = command
+                        .create_response(&ctx.http, serenity::all::CreateInteractionResponse::Message(resp))
+                        .await;
+                    return;
+                }
+
                 let res = match cmd_name {
                     "spawn" => spawn::run(&ctx, &command, &self.state).await,
                     "close" => close::run(&ctx, &command, &self.state).await,
                     "resume" => resume::run(&ctx, &command, &self.state).await,
                     "model" => model::run(&ctx, &command, &self.state).await,
+                    "effort" => effort::run(&ctx, &command, &self.state).await,
+                    "skills" => skills::run(&ctx, &command, &self.state).await,
+                    "mcp" => mcp::run(&ctx, &command, &self.state).await,
                     "status" => status::run(&ctx, &command, &self.state).await,
                     "interrupt" => interrupt::run(&ctx, &command, &self.state).await,
                     "help" => help::run(&ctx, &command).await,
@@ -216,6 +243,7 @@ impl EventHandler for Handler {
                 let res = match cmd_name {
                     "spawn" => spawn::autocomplete(&ctx, &autocomplete, &self.state).await,
                     "model" => model::autocomplete(&ctx, &autocomplete, &self.state).await,
+                    "effort" => effort::autocomplete(&ctx, &autocomplete, &self.state).await,
                     _ => Ok(()),
                 };
 
@@ -332,10 +360,11 @@ impl EventHandler for Handler {
                 .collect();
 
             let text_content = extract_text_only(content);
+            let bot_name = ctx.cache.current_user().name.clone();
             let should_respond = self
                 .state
                 .decision
-                .should_respond(&context_refs, &text_content)
+                .should_respond(&context_refs, &text_content, Some(&bot_name))
                 .await;
 
             if !should_respond {

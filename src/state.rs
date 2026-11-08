@@ -48,6 +48,8 @@ pub struct SessionData {
     pub harness: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     pub created_at: u64,
     pub last_active_at: u64,
     #[serde(default)]
@@ -198,6 +200,7 @@ impl AppState {
             project_dir: project_dir.to_string(),
             harness: default_harness,
             model: default_model,
+            effort: None,
             created_at: now,
             last_active_at: now,
             origin: SessionOrigin::Spawn,
@@ -266,6 +269,7 @@ impl AppState {
             project_dir: String::new(),
             harness: default_harness,
             model: default_model,
+            effort: None,
             created_at: now,
             last_active_at: now,
             origin: SessionOrigin::Tag,
@@ -302,11 +306,74 @@ impl AppState {
         Ok(cloned)
     }
 
-    /// Resume monitoring a previously closed session
-    pub async fn resume_session(&self, channel_id: u64) -> BotResult<SessionData> {
+    /// Resume monitoring a previously closed session, optionally attaching a specific Zeron session ID
+    pub async fn resume_session(
+        &self,
+        channel_id: u64,
+        specific_session_id: Option<&str>,
+    ) -> BotResult<SessionData> {
         let mut map = self.sessions.write().await;
+
+        if let Some(target_id) = specific_session_id {
+            let target_id = target_id.trim();
+            // Check if ANY OTHER channel is already linked to this session ID actively
+            for (cid, s) in map.iter() {
+                if *cid != channel_id && s.chat_id == target_id && !s.is_closed {
+                    return Err(BotError::Session(format!(
+                        "Session `{}` is already linked and active in another channel (<#{}>)",
+                        target_id, cid
+                    )));
+                }
+            }
+
+            // Find session metadata if previously saved anywhere
+            let previous_meta = map.values().find(|s| s.chat_id == target_id).cloned();
+
+            // Terminate any active session on the current channel first
+            if let Some(current) = map.get_mut(&channel_id) {
+                current.is_closed = true;
+            }
+
+            let now = current_timestamp();
+            let resumed_session = match previous_meta {
+                Some(mut meta) => {
+                    meta.channel_id = channel_id;
+                    meta.is_closed = false;
+                    meta.last_active_at = now;
+                    meta
+                }
+                None => {
+                    // Create an entry for the provided session id
+                    SessionData {
+                        chat_id: target_id.to_string(),
+                        kind: "chat".to_string(),
+                        parent_chat_id: None,
+                        channel_id,
+                        parent_channel_id: None,
+                        guild_id: None,
+                        title: format!("Resumed {}", target_id),
+                        project_dir: self.config.default_project_dir.to_string_lossy().to_string(),
+                        harness: self.config.default_harness.clone(),
+                        model: None,
+                        effort: None,
+                        created_at: now,
+                        last_active_at: now,
+                        origin: SessionOrigin::Spawn,
+                        is_closed: false,
+                    }
+                }
+            };
+
+            map.insert(channel_id, resumed_session.clone());
+            drop(map);
+
+            let _ = self.zeron.archive_chat(target_id, false).await;
+            self.save_sessions().await?;
+            return Ok(resumed_session);
+        }
+
         let session = map.get_mut(&channel_id).ok_or_else(|| {
-            BotError::Session("No session found for this channel to resume".into())
+            BotError::Session("No session found for this channel to resume. Provide a session id or /spawn.".into())
         })?;
 
         if !session.is_closed {
@@ -411,6 +478,7 @@ impl AppState {
             project_dir: parent_session.project_dir,
             harness: parent_session.harness,
             model: parent_session.model,
+            effort: parent_session.effort,
             created_at: now,
             last_active_at: now,
             origin: SessionOrigin::Spawn,
@@ -440,6 +508,56 @@ impl AppState {
 
         self.save_sessions().await?;
         Ok(cloned)
+    }
+
+    /// Update harness, model and effort for a channel/thread session
+    pub async fn set_harness_model_and_effort(
+        &self,
+        channel_id: u64,
+        harness_name: &str,
+        model_name: &str,
+        effort: Option<&str>,
+    ) -> BotResult<SessionData> {
+        let mut map = self.sessions.write().await;
+        let session = map
+            .get_mut(&channel_id)
+            .ok_or_else(|| BotError::Session("No active session found for this channel".into()))?;
+
+        session.harness = harness_name.to_string();
+        session.model = Some(model_name.to_string());
+        session.effort = effort.map(|e| e.to_string());
+        session.last_active_at = current_timestamp();
+        let cloned = session.clone();
+        drop(map);
+
+        self.save_sessions().await?;
+        Ok(cloned)
+    }
+
+    /// Update effort level for an existing session
+    pub async fn set_effort(&self, channel_id: u64, effort: &str) -> BotResult<SessionData> {
+        let mut map = self.sessions.write().await;
+        let session = map
+            .get_mut(&channel_id)
+            .ok_or_else(|| BotError::Session("No active session found for this channel".into()))?;
+
+        session.effort = Some(effort.to_string());
+        session.last_active_at = current_timestamp();
+        let cloned = session.clone();
+        drop(map);
+
+        self.save_sessions().await?;
+        Ok(cloned)
+    }
+
+    /// Update harness and model for a channel/thread session
+    pub async fn set_harness_and_model(
+        &self,
+        channel_id: u64,
+        harness_name: &str,
+        model_name: &str,
+    ) -> BotResult<SessionData> {
+        self.set_harness_model_and_effort(channel_id, harness_name, model_name, None).await
     }
 
     /// Update model for a channel/thread session

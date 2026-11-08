@@ -164,6 +164,8 @@ pub struct HarnessInfo {
     pub available: bool,
     #[serde(default)]
     pub connected: bool,
+    #[serde(default)]
+    pub installed: bool,
     #[serde(rename = "signedIn")]
     pub signed_in: Option<bool>,
     #[serde(rename = "reasoningLevels", default)]

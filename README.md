@@ -117,7 +117,7 @@ All activities execute strictly on the target host/VM running the Zeron Engine. 
 Clone the repository and copy the example environment configuration:
 
 ```bash
-git clone https://github.com/suwu/zeron-dc-bot.git
+git clone https://github.com/suwupnil/zeron-dc-bot.git
 cd zeron-dc-bot
 cp .env.example .env
 ```

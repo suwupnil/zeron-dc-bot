@@ -1,7 +1,10 @@
 pub mod close;
+pub mod effort;
 pub mod help;
 pub mod interrupt;
+pub mod mcp;
 pub mod model;
 pub mod resume;
+pub mod skills;
 pub mod spawn;
 pub mod status;

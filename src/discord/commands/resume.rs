@@ -2,13 +2,21 @@ use crate::discord::topic;
 use crate::error::BotResult;
 use crate::state::AppState;
 use serenity::all::{
-    CommandInteraction, Context, CreateCommand, CreateInteractionResponse,
-    CreateInteractionResponseMessage,
+    CommandInteraction, CommandOptionType, Context, CreateCommand, CreateCommandOption,
+    CreateInteractionResponse, CreateInteractionResponseMessage,
 };
 
 pub fn register() -> CreateCommand {
     CreateCommand::new("resume")
-        .description("Resume monitoring a previously closed Zeron session in this channel")
+        .description("Resume monitoring a Zeron session in this channel")
+        .add_option(
+            CreateCommandOption::new(
+                CommandOptionType::String,
+                "session_id",
+                "Optional Zeron session ID to resume or switch to",
+            )
+            .required(false),
+        )
 }
 
 pub async fn run(
@@ -17,8 +25,14 @@ pub async fn run(
     state: &AppState,
 ) -> BotResult<()> {
     let channel_id = command.channel_id.get();
+    let specific_id = command
+        .data
+        .options
+        .iter()
+        .find(|opt| opt.name == "session_id")
+        .and_then(|opt| opt.value.as_str());
 
-    match state.resume_session(channel_id).await {
+    match state.resume_session(channel_id, specific_id).await {
         Ok(session) => {
             let _ = topic::update_channel_topic(ctx, channel_id, state).await;
 

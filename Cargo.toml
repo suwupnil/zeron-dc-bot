@@ -2,10 +2,10 @@
 name = "zeron-dc-bot"
 version = "0.1.0"
 edition = "2021"
-authors = ["Suwu <swapnillcodes@gmail.com>"]
+authors = ["suwupnil <sw@pnil.in>"]
 description = "Discord bridge bot for local Zeron AI agent sessions and side-chat threads"
 license = "MIT"
-repository = "https://github.com/suwu/zeron-dc-bot"
+repository = "https://github.com/suwupnil/zeron-dc-bot"
 readme = "README.md"
 keywords = ["discord", "bot", "zeron", "ai-agents", "mcp"]
 categories = ["command-line-utilities", "development-tools"]
