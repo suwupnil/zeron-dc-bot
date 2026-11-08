@@ -11,7 +11,9 @@ use zeron_dc_bot::zeron::ZeronClient;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+        )
         .with(tracing_subscriber::fmt::layer())
         .init();
 
@@ -27,7 +29,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    info!("Connecting to local Zeron daemon at: {:?}", config.zeron_path);
+    info!(
+        "Connecting to local Zeron daemon at: {:?}",
+        config.zeron_path
+    );
     let zeron_client = ZeronClient::new(&config.zeron_path);
 
     // Initialize state and load persisted sessions

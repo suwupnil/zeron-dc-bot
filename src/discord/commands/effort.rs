@@ -20,11 +20,7 @@ pub fn register() -> CreateCommand {
         )
 }
 
-pub async fn run(
-    ctx: &Context,
-    command: &CommandInteraction,
-    state: &AppState,
-) -> BotResult<()> {
+pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) -> BotResult<()> {
     let level_option = command
         .data
         .options
@@ -49,9 +45,7 @@ pub async fn run(
     let existing = state.get_session(channel_id).await;
 
     let session = match existing {
-        Some(s) if !s.is_closed => {
-            state.set_effort(channel_id, level_name).await?
-        }
+        Some(s) if !s.is_closed => state.set_effort(channel_id, level_name).await?,
         _ => {
             let resp = CreateInteractionResponseMessage::new()
                 .content(

@@ -39,10 +39,7 @@ impl ZeronClient {
             return Ok(());
         }
 
-        info!(
-            "Spawning Zeron MCP daemon process: {:?}",
-            self.binary_path
-        );
+        info!("Spawning Zeron MCP daemon process: {:?}", self.binary_path);
 
         let mut cmd = Command::new(&self.binary_path);
         cmd.arg("mcp")
@@ -77,8 +74,9 @@ impl ZeronClient {
             });
         }
 
-        let pending_requests: Arc<Mutex<HashMap<u64, oneshot::Sender<BotResult<JsonRpcResponse>>>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let pending_requests: Arc<
+            Mutex<HashMap<u64, oneshot::Sender<BotResult<JsonRpcResponse>>>>,
+        > = Arc::new(Mutex::new(HashMap::new()));
 
         let pending_clone = Arc::clone(&pending_requests);
 
@@ -210,7 +208,9 @@ impl ZeronClient {
             Ok(Err(_)) => {
                 let mut map = inner.pending_requests.lock().await;
                 map.remove(&req_id);
-                Err(BotError::ZeronMcp("Channel dropped before response received".into()))
+                Err(BotError::ZeronMcp(
+                    "Channel dropped before response received".into(),
+                ))
             }
             Err(_) => {
                 let mut map = inner.pending_requests.lock().await;

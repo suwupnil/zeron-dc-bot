@@ -22,11 +22,7 @@ pub fn register() -> CreateCommand {
         )
 }
 
-pub async fn run(
-    ctx: &Context,
-    command: &CommandInteraction,
-    state: &AppState,
-) -> BotResult<()> {
+pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) -> BotResult<()> {
     let dir_option = command
         .data
         .options
@@ -156,7 +152,9 @@ pub async fn autocomplete(
 
                     if !name.starts_with('.')
                         && (current_input.is_empty()
-                            || path_str.to_lowercase().contains(&current_input.to_lowercase()))
+                            || path_str
+                                .to_lowercase()
+                                .contains(&current_input.to_lowercase()))
                     {
                         choices.push(AutocompleteChoice::new(path_str.clone(), path_str));
                     }

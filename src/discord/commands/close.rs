@@ -10,11 +10,7 @@ pub fn register() -> CreateCommand {
         .description("End the current Zeron session and stop monitoring this channel")
 }
 
-pub async fn run(
-    ctx: &Context,
-    command: &CommandInteraction,
-    state: &AppState,
-) -> BotResult<()> {
+pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) -> BotResult<()> {
     let channel_id = command.channel_id.get();
 
     match state.close_session(channel_id).await {
@@ -32,10 +28,8 @@ pub async fn run(
                 .await?;
         }
         Err(e) => {
-            let resp = CreateInteractionResponseMessage::new().content(format!(
-                "⚠️ Could not close session: {}",
-                e
-            ));
+            let resp = CreateInteractionResponseMessage::new()
+                .content(format!("⚠️ Could not close session: {}", e));
             command
                 .create_response(&ctx.http, CreateInteractionResponse::Message(resp))
                 .await?;

@@ -19,11 +19,7 @@ pub fn register() -> CreateCommand {
         )
 }
 
-pub async fn run(
-    ctx: &Context,
-    command: &CommandInteraction,
-    state: &AppState,
-) -> BotResult<()> {
+pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) -> BotResult<()> {
     let channel_id = command.channel_id.get();
     let specific_id = command
         .data

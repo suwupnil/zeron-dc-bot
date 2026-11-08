@@ -18,18 +18,13 @@ fn current_timestamp() -> u64 {
         .as_secs()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SessionOrigin {
     #[serde(rename = "spawn")]
+    #[default]
     Spawn,
     #[serde(rename = "tag")]
     Tag,
-}
-
-impl Default for SessionOrigin {
-    fn default() -> Self {
-        SessionOrigin::Spawn
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,27 +87,28 @@ impl AppState {
         }
 
         match tokio::fs::read_to_string(&self.storage_path).await {
-            Ok(content) => {
-                match serde_json::from_str::<HashMap<u64, SessionData>>(&content) {
-                    Ok(loaded) => {
-                        let count = loaded.len();
-                        let mut map = self.sessions.write().await;
-                        *map = loaded;
-                        info!(
-                            "Restored {} Discord-Zeron session mappings from {:?}",
-                            count, self.storage_path
-                        );
-                    }
-                    Err(e) => {
-                        warn!(
-                            "Failed to deserialize session state file {:?}: {}",
-                            self.storage_path, e
-                        );
-                    }
+            Ok(content) => match serde_json::from_str::<HashMap<u64, SessionData>>(&content) {
+                Ok(loaded) => {
+                    let count = loaded.len();
+                    let mut map = self.sessions.write().await;
+                    *map = loaded;
+                    info!(
+                        "Restored {} Discord-Zeron session mappings from {:?}",
+                        count, self.storage_path
+                    );
                 }
-            }
+                Err(e) => {
+                    warn!(
+                        "Failed to deserialize session state file {:?}: {}",
+                        self.storage_path, e
+                    );
+                }
+            },
             Err(e) => {
-                warn!("Failed to read session state file {:?}: {}", self.storage_path, e);
+                warn!(
+                    "Failed to read session state file {:?}: {}",
+                    self.storage_path, e
+                );
             }
         }
         Ok(())
@@ -139,7 +135,10 @@ impl AppState {
     /// Determine active or connected harness
     pub async fn resolve_harness(&self) -> String {
         if let Ok(harnesses) = self.zeron.list_harnesses().await {
-            if harnesses.iter().any(|h| h.id == self.config.default_harness && h.connected) {
+            if harnesses
+                .iter()
+                .any(|h| h.id == self.config.default_harness && h.connected)
+            {
                 self.config.default_harness.clone()
             } else if let Some(connected) = harnesses.iter().find(|h| h.connected) {
                 connected.id.clone()
@@ -288,9 +287,9 @@ impl AppState {
     /// Close active session and stop monitoring channel
     pub async fn close_session(&self, channel_id: u64) -> BotResult<SessionData> {
         let mut map = self.sessions.write().await;
-        let session = map.get_mut(&channel_id).ok_or_else(|| {
-            BotError::Session("No active session found for this channel".into())
-        })?;
+        let session = map
+            .get_mut(&channel_id)
+            .ok_or_else(|| BotError::Session("No active session found for this channel".into()))?;
 
         if session.is_closed {
             return Err(BotError::Session("Session is already closed".into()));
@@ -352,7 +351,11 @@ impl AppState {
                         parent_channel_id: None,
                         guild_id: None,
                         title: format!("Resumed {}", target_id),
-                        project_dir: self.config.default_project_dir.to_string_lossy().to_string(),
+                        project_dir: self
+                            .config
+                            .default_project_dir
+                            .to_string_lossy()
+                            .to_string(),
                         harness: self.config.default_harness.clone(),
                         model: None,
                         effort: None,
@@ -373,7 +376,10 @@ impl AppState {
         }
 
         let session = map.get_mut(&channel_id).ok_or_else(|| {
-            BotError::Session("No session found for this channel to resume. Provide a session id or /spawn.".into())
+            BotError::Session(
+                "No session found for this channel to resume. Provide a session id or /spawn."
+                    .into(),
+            )
         })?;
 
         if !session.is_closed {
@@ -407,7 +413,11 @@ impl AppState {
             }
         }
 
-        let default_dir = self.config.default_project_dir.to_string_lossy().to_string();
+        let default_dir = self
+            .config
+            .default_project_dir
+            .to_string_lossy()
+            .to_string();
         self.spawn_project_session(channel_id, channel_name, guild_id, &default_dir)
             .await
     }
@@ -557,7 +567,8 @@ impl AppState {
         harness_name: &str,
         model_name: &str,
     ) -> BotResult<SessionData> {
-        self.set_harness_model_and_effort(channel_id, harness_name, model_name, None).await
+        self.set_harness_model_and_effort(channel_id, harness_name, model_name, None)
+            .await
     }
 
     /// Update model for a channel/thread session

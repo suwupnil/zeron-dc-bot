@@ -81,7 +81,12 @@ pub async fn get_available_skills_and_mcp(state: &AppState) -> (Vec<String>, Vec
     )
 }
 
-fn scan_skills_recursive(dir: &Path, skills: &mut BTreeSet<String>, depth: usize, max_depth: usize) {
+fn scan_skills_recursive(
+    dir: &Path,
+    skills: &mut BTreeSet<String>,
+    depth: usize,
+    max_depth: usize,
+) {
     if depth > max_depth || !dir.exists() || !dir.is_dir() {
         return;
     }
@@ -172,10 +177,7 @@ pub async fn update_channel_topic(
         .or_else(|| state.config.default_model.clone())
         .unwrap_or_else(|| "default".to_string());
 
-    let effort_name = session
-        .effort
-        .as_deref()
-        .unwrap_or("default");
+    let effort_name = session.effort.as_deref().unwrap_or("default");
 
     let topic_content = format!("{}/{}.{}", session.harness, model_name, effort_name);
 

@@ -7,15 +7,10 @@ use serenity::all::{
 };
 
 pub fn register() -> CreateCommand {
-    CreateCommand::new("skills")
-        .description("List available and installed skills")
+    CreateCommand::new("skills").description("List available and installed skills")
 }
 
-pub async fn run(
-    ctx: &Context,
-    command: &CommandInteraction,
-    state: &AppState,
-) -> BotResult<()> {
+pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) -> BotResult<()> {
     let (skills, _) = topic::get_available_skills_and_mcp(state).await;
 
     let content = if skills.is_empty() {

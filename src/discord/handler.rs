@@ -49,7 +49,10 @@ impl Handler {
 #[serenity::async_trait]
 impl EventHandler for Handler {
     async fn ready(&self, ctx: Context, ready: Ready) {
-        info!("Logged in to Discord as: {} (ID: {})", ready.user.name, ready.user.id);
+        info!(
+            "Logged in to Discord as: {} (ID: {})",
+            ready.user.name, ready.user.id
+        );
 
         ctx.set_activity(Some(ActivityData::watching("Zeron AI sessions")));
 
@@ -67,7 +70,11 @@ impl EventHandler for Handler {
         ];
 
         let joined_guilds: Vec<u64> = ready.guilds.iter().map(|g| g.id.get()).collect();
-        info!("Bot is currently in {} guild(s): {:?}", joined_guilds.len(), joined_guilds);
+        info!(
+            "Bot is currently in {} guild(s): {:?}",
+            joined_guilds.len(),
+            joined_guilds
+        );
 
         if let Some(guild_id_u64) = self.state.config.guild_id {
             let guild_id = GuildId::new(guild_id_u64);
@@ -78,10 +85,16 @@ impl EventHandler for Handler {
                 );
             }
 
-            info!("Registering slash commands for development Guild: {}", guild_id);
+            info!(
+                "Registering slash commands for development Guild: {}",
+                guild_id
+            );
             match guild_id.set_commands(&ctx.http, commands.clone()).await {
                 Ok(registered) => {
-                    info!("Registered {} guild slash commands successfully", registered.len());
+                    info!(
+                        "Registered {} guild slash commands successfully",
+                        registered.len()
+                    );
                 }
                 Err(e) => {
                     error!(
@@ -90,7 +103,10 @@ impl EventHandler for Handler {
                     );
                     match serenity::all::Command::set_global_commands(&ctx.http, commands).await {
                         Ok(registered) => {
-                            info!("Registered {} global slash commands as fallback", registered.len());
+                            info!(
+                                "Registered {} global slash commands as fallback",
+                                registered.len()
+                            );
                         }
                         Err(ge) => {
                             error!("Failed to register global slash commands: {}", ge);
@@ -102,7 +118,10 @@ impl EventHandler for Handler {
             info!("Registering slash commands globally...");
             match serenity::all::Command::set_global_commands(&ctx.http, commands).await {
                 Ok(registered) => {
-                    info!("Registered {} global slash commands successfully", registered.len());
+                    info!(
+                        "Registered {} global slash commands successfully",
+                        registered.len()
+                    );
                 }
                 Err(e) => {
                     error!("Failed to register global slash commands: {}", e);
@@ -118,7 +137,10 @@ impl EventHandler for Handler {
         let parent_id = match thread.parent_id {
             Some(pid) => pid.get(),
             None => {
-                warn!("Thread {} has no parent_id; skipping side chat creation", thread_id);
+                warn!(
+                    "Thread {} has no parent_id; skipping side chat creation",
+                    thread_id
+                );
                 return;
             }
         };
@@ -152,13 +174,7 @@ impl EventHandler for Handler {
 
         match self
             .state
-            .get_or_create_thread_session(
-                thread_id,
-                &thread.name,
-                parent_id,
-                None,
-                Some(guild_id),
-            )
+            .get_or_create_thread_session(thread_id, &thread.name, parent_id, None, Some(guild_id))
             .await
         {
             Ok(session) => {
@@ -198,10 +214,14 @@ impl EventHandler for Handler {
                 // Check if channel has an active session
                 let channel_id = command.channel_id.get();
                 let existing_session = self.state.get_session(channel_id).await;
-                let has_active_session = existing_session.as_ref().map_or(false, |s| !s.is_closed);
+                let has_active_session = existing_session.as_ref().is_some_and(|s| !s.is_closed);
 
                 // Requirement 4: Don't allow any command other than /spawn or /resume if no zeron session is linked
-                if !has_active_session && cmd_name != "spawn" && cmd_name != "resume" && cmd_name != "help" {
+                if !has_active_session
+                    && cmd_name != "spawn"
+                    && cmd_name != "resume"
+                    && cmd_name != "help"
+                {
                     let resp = serenity::all::CreateInteractionResponseMessage::new()
                         .content(
                             "❌ No active Zeron session linked with this channel.\n\
@@ -209,7 +229,10 @@ impl EventHandler for Handler {
                         )
                         .ephemeral(true);
                     let _ = command
-                        .create_response(&ctx.http, serenity::all::CreateInteractionResponse::Message(resp))
+                        .create_response(
+                            &ctx.http,
+                            serenity::all::CreateInteractionResponse::Message(resp),
+                        )
                         .await;
                     return;
                 }
@@ -296,7 +319,9 @@ impl EventHandler for Handler {
             Some(Channel::Guild(gc)) => {
                 let is_th = matches!(
                     gc.kind,
-                    ChannelType::PublicThread | ChannelType::PrivateThread | ChannelType::NewsThread
+                    ChannelType::PublicThread
+                        | ChannelType::PrivateThread
+                        | ChannelType::NewsThread
                 );
                 (gc.name.clone(), is_th, gc.parent_id.map(|p| p.get()))
             }
@@ -304,7 +329,7 @@ impl EventHandler for Handler {
         };
 
         let existing_session = self.state.get_session(channel_id).await;
-        let is_active = existing_session.as_ref().map_or(false, |s| !s.is_closed);
+        let is_active = existing_session.as_ref().is_some_and(|s| !s.is_closed);
 
         // If channel is not currently active / monitored
         if !is_active {
@@ -323,7 +348,10 @@ impl EventHandler for Handler {
                 {
                     error!("Failed to spawn casual tag session: {}", e);
                     let _ = msg
-                        .reply(&ctx.http, format!("❌ Failed to initialize chat session: {}", e))
+                        .reply(
+                            &ctx.http,
+                            format!("❌ Failed to initialize chat session: {}", e),
+                        )
                         .await;
                     return;
                 }
@@ -405,13 +433,7 @@ impl EventHandler for Handler {
             let parent_id = parent_channel_id.unwrap_or(channel_id);
             match self
                 .state
-                .get_or_create_thread_session(
-                    channel_id,
-                    &channel_name,
-                    parent_id,
-                    None,
-                    guild_id,
-                )
+                .get_or_create_thread_session(channel_id, &channel_name, parent_id, None, guild_id)
                 .await
             {
                 Ok(s) => s,
@@ -429,7 +451,8 @@ impl EventHandler for Handler {
             }
         };
 
-        let is_first_tag_turn = session.origin == SessionOrigin::Tag && session.created_at == session.last_active_at;
+        let is_first_tag_turn =
+            session.origin == SessionOrigin::Tag && session.created_at == session.last_active_at;
         self.state.touch_session(channel_id).await;
 
         let typing = msg.channel_id.start_typing(&ctx.http);
@@ -478,8 +501,7 @@ impl EventHandler for Handler {
                             if let Some(role) = m.get("role").and_then(|r| r.as_str()) {
                                 if role == "assistant" {
                                     if latest_reasoning.is_none() {
-                                        if let Some(r) =
-                                            m.get("reasoning").and_then(|r| r.as_str())
+                                        if let Some(r) = m.get("reasoning").and_then(|r| r.as_str())
                                         {
                                             let trimmed_r = r.trim();
                                             if !trimmed_r.is_empty() {
@@ -535,7 +557,7 @@ impl EventHandler for Handler {
                                     full_output.push_str(&format!("-# {}\n", l));
                                 }
                             }
-                            full_output.push_str("\n");
+                            full_output.push('\n');
                         }
                     }
                 }
@@ -562,7 +584,8 @@ impl EventHandler for Handler {
                     if let Err(e) = msg.channel_id.send_message(&ctx.http, create_msg).await {
                         warn!("Failed to send Discord reply with reference: {}. Retrying without reference...", e);
                         let fallback_msg = CreateMessage::new().content(chunk);
-                        if let Err(fe) = msg.channel_id.send_message(&ctx.http, fallback_msg).await {
+                        if let Err(fe) = msg.channel_id.send_message(&ctx.http, fallback_msg).await
+                        {
                             error!("Failed to send Discord reply chunk: {}", fe);
                         }
                     }
