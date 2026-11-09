@@ -142,7 +142,7 @@ cargo build --release
 ```
 
 ### 5.2 VM Deployment
-The production bot runs on the Ubuntu aarch64 VM (`clipfarmer`):
+The production bot runs on the VM:
 ```bash
 # Connect to host
 ssh -i /path/to/ssh-key user@host

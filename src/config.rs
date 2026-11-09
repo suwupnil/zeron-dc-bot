@@ -46,8 +46,8 @@ impl Config {
                 }
             });
 
-        let default_harness = std::env::var("DEFAULT_HARNESS")
-            .unwrap_or_else(|_| "codex".to_string());
+        let default_harness =
+            std::env::var("DEFAULT_HARNESS").unwrap_or_else(|_| "codex".to_string());
 
         let default_model = std::env::var("DEFAULT_MODEL").ok();
 
@@ -56,16 +56,13 @@ impl Config {
                 let expanded = shellexpand::tilde(&s);
                 PathBuf::from(expanded.as_ref())
             })
-            .unwrap_or_else(|_| {
-                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-            });
+            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
         let auto_create_sessions = std::env::var("AUTO_CREATE_SESSIONS")
             .map(|v| v.to_lowercase() == "true" || v == "1")
             .unwrap_or(true);
 
-        let command_prefix = std::env::var("COMMAND_PREFIX")
-            .unwrap_or_else(|_| "!z".to_string());
+        let command_prefix = std::env::var("COMMAND_PREFIX").unwrap_or_else(|_| "!z".to_string());
 
         let session_storage_path = std::env::var("SESSION_STORAGE_PATH")
             .map(PathBuf::from)

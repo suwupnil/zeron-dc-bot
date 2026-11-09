@@ -35,6 +35,5 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
                 .await?;
         }
     }
-
     Ok(())
 }
