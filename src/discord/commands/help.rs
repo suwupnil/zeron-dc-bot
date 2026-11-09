@@ -5,14 +5,10 @@ use serenity::all::{
 };
 
 pub fn register() -> CreateCommand {
-    CreateCommand::new("help")
-        .description("Learn how to use the Zeron Discord Bridge Bot")
+    CreateCommand::new("help").description("Learn how to use the Zeron Discord Bridge Bot")
 }
 
-pub async fn run(
-    ctx: &Context,
-    command: &CommandInteraction,
-) -> BotResult<()> {
+pub async fn run(ctx: &Context, command: &CommandInteraction) -> BotResult<()> {
     let help_text = "\
 ### 🚀 Zeron Discord Bridge Bot
 
@@ -45,7 +41,9 @@ Connect your Discord channels and threads to your local **Zeron** coding agents.
 - Explicitly tagging `@bot` or replying to the bot always guarantees an immediate response.
 ";
 
-    let resp = CreateInteractionResponseMessage::new().content(help_text);
+    let resp = CreateInteractionResponseMessage::new()
+        .content(help_text)
+        .ephemeral(true);
     command
         .create_response(&ctx.http, CreateInteractionResponse::Message(resp))
         .await?;

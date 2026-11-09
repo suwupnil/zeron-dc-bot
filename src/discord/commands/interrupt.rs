@@ -6,15 +6,10 @@ use serenity::all::{
 };
 
 pub fn register() -> CreateCommand {
-    CreateCommand::new("interrupt")
-        .description("Stop any currently running agent turn in this channel / thread")
+    CreateCommand::new("interrupt").description("Stop agent")
 }
 
-pub async fn run(
-    ctx: &Context,
-    command: &CommandInteraction,
-    state: &AppState,
-) -> BotResult<()> {
+pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) -> BotResult<()> {
     let channel_id = command.channel_id.get();
     let session = state.get_session(channel_id).await;
 
@@ -26,7 +21,9 @@ pub async fn run(
         None => "❌ No active session found in this channel.".to_string(),
     };
 
-    let resp = CreateInteractionResponseMessage::new().content(content);
+    let resp = CreateInteractionResponseMessage::new()
+        .content(content)
+        .ephemeral(true);
     command
         .create_response(&ctx.http, CreateInteractionResponse::Message(resp))
         .await?;

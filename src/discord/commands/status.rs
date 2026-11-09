@@ -10,11 +10,7 @@ pub fn register() -> CreateCommand {
         .description("View current Zeron session state, model, directory, and monitoring status")
 }
 
-pub async fn run(
-    ctx: &Context,
-    command: &CommandInteraction,
-    state: &AppState,
-) -> BotResult<()> {
+pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) -> BotResult<()> {
     let channel_id = command.channel_id.get();
     let session = state.get_session(channel_id).await;
 
@@ -68,7 +64,7 @@ pub async fn run(
                 live_status,
                 s.harness,
                 s.model.as_deref().unwrap_or("harness default"),
-                if s.project_dir.is_empty() { "None (Casual tag session)" } else { &s.project_dir },
+                if s.project_dir.is_empty() { "No directory" } else { &s.project_dir },
                 decision_model_desc,
             )
         }
@@ -78,7 +74,9 @@ pub async fn run(
         }
     };
 
-    let resp = CreateInteractionResponseMessage::new().content(content);
+    let resp = CreateInteractionResponseMessage::new()
+        .content(content)
+        .ephemeral(true);
     command
         .create_response(&ctx.http, CreateInteractionResponse::Message(resp))
         .await?;

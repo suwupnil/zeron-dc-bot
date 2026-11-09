@@ -10,23 +10,19 @@ use std::path::Path;
 
 pub fn register() -> CreateCommand {
     CreateCommand::new("spawn")
-        .description("Spawn a new Zeron project session assigned to a directory")
+        .description("Start a brand new project")
         .add_option(
             CreateCommandOption::new(
                 CommandOptionType::String,
                 "directory",
-                "Host directory for this project session (will be created if it does not exist)",
+                "Host directory of the project",
             )
             .required(true)
             .set_autocomplete(true),
         )
 }
 
-pub async fn run(
-    ctx: &Context,
-    command: &CommandInteraction,
-    state: &AppState,
-) -> BotResult<()> {
+pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) -> BotResult<()> {
     let dir_option = command
         .data
         .options
@@ -96,15 +92,16 @@ pub async fn run(
          - **Session ID:** `{}`\n\
          - **Directory:** `{}`\n\
          - **Harness:** `{}`\n\
-         - **Active Model:** `{}`\n\
-         Channel topic updated with active model, skills, and MCP servers.",
+         - **Active Model:** `{}`",
         session.chat_id,
         session.project_dir,
         session.harness,
         session.model.as_deref().unwrap_or("harness default")
     );
 
-    let resp = CreateInteractionResponseMessage::new().content(resp_text);
+    let resp = CreateInteractionResponseMessage::new()
+        .content(resp_text)
+        .ephemeral(true);
     command
         .create_response(&ctx.http, CreateInteractionResponse::Message(resp))
         .await?;
@@ -156,7 +153,9 @@ pub async fn autocomplete(
 
                     if !name.starts_with('.')
                         && (current_input.is_empty()
-                            || path_str.to_lowercase().contains(&current_input.to_lowercase()))
+                            || path_str
+                                .to_lowercase()
+                                .contains(&current_input.to_lowercase()))
                     {
                         choices.push(AutocompleteChoice::new(path_str.clone(), path_str));
                     }
