@@ -196,3 +196,29 @@ pub async fn update_channel_topic(
 
     Ok(())
 }
+
+/// Clear/empty the channel topic when a session is closed or unlinked
+pub async fn clear_channel_topic(ctx: &Context, channel_id: u64) -> BotResult<()> {
+    match ctx.http.get_channel(ChannelId::new(channel_id)).await {
+        Ok(Channel::Guild(gc)) => {
+            if matches!(
+                gc.kind,
+                ChannelType::PublicThread | ChannelType::PrivateThread | ChannelType::NewsThread
+            ) {
+                return Ok(());
+            }
+        }
+        _ => return Ok(()),
+    };
+
+    info!("Clearing topic for closed channel {}", channel_id);
+    let edit = EditChannel::new().topic("");
+    if let Err(e) = ChannelId::new(channel_id).edit(&ctx.http, edit).await {
+        warn!(
+            "Failed to clear channel topic for channel {}: {} (check bot Manage Channels permissions)",
+            channel_id, e
+        );
+    }
+
+    Ok(())
+}

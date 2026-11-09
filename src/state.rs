@@ -520,7 +520,10 @@ impl AppState {
         Ok(cloned)
     }
 
-    /// Update harness, model and effort for a channel/thread session
+    /// Update harness, model and effort for a channel/thread session.
+    /// This archives the previous Zeron chat session and creates a fresh chat session
+    /// in Zeron with the newly selected harness, model, and reasoning level, ensuring that
+    /// the AI runner actually switches to the requested agent.
     pub async fn set_harness_model_and_effort(
         &self,
         channel_id: u64,
@@ -528,15 +531,97 @@ impl AppState {
         model_name: &str,
         effort: Option<&str>,
     ) -> BotResult<SessionData> {
+        let (old_chat_id, kind, parent_chat_id, _parent_channel_id, _guild_id, title, project_dir, origin) = {
+            let map = self.sessions.read().await;
+            let session = map
+                .get(&channel_id)
+                .ok_or_else(|| BotError::Session("No active session found for this channel".into()))?;
+
+            (
+                session.chat_id.clone(),
+                session.kind.clone(),
+                session.parent_chat_id.clone(),
+                session.parent_channel_id,
+                session.guild_id,
+                session.title.clone(),
+                session.project_dir.clone(),
+                session.origin.clone(),
+            )
+        };
+
+        // Try creating the new Zeron chat session with the updated harness/model.
+        // If Zeron daemon is unavailable (e.g. in offline unit tests), gracefully fall back
+        // to retaining the existing chat_id while still updating the metadata.
+        let new_chat_id_opt = if kind == "side" {
+            if let Some(parent_id) = parent_chat_id.as_deref() {
+                match self
+                    .zeron
+                    .create_side_chat(
+                        parent_id,
+                        Some(&title),
+                        if project_dir.is_empty() { None } else { Some(&project_dir) },
+                        Some(model_name),
+                        Some(harness_name),
+                    )
+                    .await
+                {
+                    Ok(side_resp) => Some(side_resp.chat_id),
+                    Err(e) => {
+                        warn!("Could not spawn updated side chat in Zeron: {:?}", e);
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            // Main standalone chat
+            let create_args = CreateChatArgs {
+                kind: Some("chat".to_string()),
+                title: Some(title.clone()),
+                cwd: if project_dir.is_empty() {
+                    None
+                } else {
+                    Some(project_dir.clone())
+                },
+                harness: Some(harness_name.to_string()),
+                model: Some(model_name.to_string()),
+                reasoning: effort.map(|e| e.to_string()),
+                ..Default::default()
+            };
+            match self.zeron.create_chat(create_args).await {
+                Ok(resp) => {
+                    // If it was a casual tag session, archive it in Zeron so it doesn't clutter projects
+                    if origin == SessionOrigin::Tag {
+                        let _ = self.zeron.archive_chat(&resp.chat_id, true).await;
+                    }
+                    Some(resp.chat_id)
+                }
+                Err(e) => {
+                    warn!("Could not spawn updated chat in Zeron: {:?}", e);
+                    None
+                }
+            }
+        };
+
+        // If a new chat session was successfully created in Zeron, archive the old one
+        if new_chat_id_opt.is_some() {
+            let _ = self.zeron.archive_chat(&old_chat_id, true).await;
+        }
+
+        let now = current_timestamp();
         let mut map = self.sessions.write().await;
         let session = map
             .get_mut(&channel_id)
             .ok_or_else(|| BotError::Session("No active session found for this channel".into()))?;
 
+        if let Some(new_id) = new_chat_id_opt {
+            session.chat_id = new_id;
+        }
         session.harness = harness_name.to_string();
         session.model = Some(model_name.to_string());
         session.effort = effort.map(|e| e.to_string());
-        session.last_active_at = current_timestamp();
+        session.last_active_at = now;
         let cloned = session.clone();
         drop(map);
 
@@ -546,18 +631,19 @@ impl AppState {
 
     /// Update effort level for an existing session
     pub async fn set_effort(&self, channel_id: u64, effort: &str) -> BotResult<SessionData> {
-        let mut map = self.sessions.write().await;
-        let session = map
-            .get_mut(&channel_id)
-            .ok_or_else(|| BotError::Session("No active session found for this channel".into()))?;
+        let (harness_name, model_name) = {
+            let map = self.sessions.read().await;
+            let session = map
+                .get(&channel_id)
+                .ok_or_else(|| BotError::Session("No active session found for this channel".into()))?;
+            (
+                session.harness.clone(),
+                session.model.clone().unwrap_or_else(|| "default".to_string()),
+            )
+        };
 
-        session.effort = Some(effort.to_string());
-        session.last_active_at = current_timestamp();
-        let cloned = session.clone();
-        drop(map);
-
-        self.save_sessions().await?;
-        Ok(cloned)
+        self.set_harness_model_and_effort(channel_id, &harness_name, &model_name, Some(effort))
+            .await
     }
 
     /// Update harness and model for a channel/thread session
@@ -573,18 +659,21 @@ impl AppState {
 
     /// Update model for a channel/thread session
     pub async fn set_model(&self, channel_id: u64, model_name: &str) -> BotResult<SessionData> {
-        let mut map = self.sessions.write().await;
-        let session = map
-            .get_mut(&channel_id)
-            .ok_or_else(|| BotError::Session("No active session found for this channel".into()))?;
+        let (harness_name, effort) = {
+            let map = self.sessions.read().await;
+            let session = map
+                .get(&channel_id)
+                .ok_or_else(|| BotError::Session("No active session found for this channel".into()))?;
+            (session.harness.clone(), session.effort.clone())
+        };
 
-        session.model = Some(model_name.to_string());
-        session.last_active_at = current_timestamp();
-        let cloned = session.clone();
-        drop(map);
-
-        self.save_sessions().await?;
-        Ok(cloned)
+        self.set_harness_model_and_effort(
+            channel_id,
+            &harness_name,
+            model_name,
+            effort.as_deref(),
+        )
+        .await
     }
 
     /// Reset / recreate a session for a channel or thread

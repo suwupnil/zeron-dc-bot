@@ -1,3 +1,4 @@
+use crate::discord::topic;
 use crate::error::BotResult;
 use crate::state::AppState;
 use serenity::all::{
@@ -15,6 +16,9 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
 
     match state.close_session(channel_id).await {
         Ok(session) => {
+            // Empty channel topic when no active session is linked
+            let _ = topic::clear_channel_topic(ctx, channel_id).await;
+
             let resp = CreateInteractionResponseMessage::new().content(format!(
                 "🔒 **Zeron Session Closed**\n\
                  - **Session ID:** `{}`\n\

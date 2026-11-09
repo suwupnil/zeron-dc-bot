@@ -88,7 +88,54 @@ async fn test_live_zeron_mcp_handshake_and_tools() {
     assert!(!side_chat.chat_id.is_empty());
     assert_eq!(side_chat.parent_chat_id, Some(chat.chat_id.clone()));
 
-    // 7. Clean up by archiving both
+    // 7. Verify switching harness/model updates chat_id and creates a fresh session
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_file = temp_dir.path().join("sessions.json");
+    let config = zeron_dc_bot::config::Config {
+        discord_token: "mock_token".to_string(),
+        application_id: Some(12345),
+        guild_id: None,
+        zeron_path: zeron_path.to_path_buf(),
+        default_harness: available_harness.clone(),
+        default_model: None,
+        default_project_dir: std::path::PathBuf::from("/tmp"),
+        auto_create_sessions: true,
+        command_prefix: "!z".to_string(),
+        session_storage_path: session_file,
+        cloudflare_account_id: None,
+        cloudflare_api_token: None,
+        cloudflare_model: "@cf/cloudflare/clef-flash".to_string(),
+        cloudflare_ai_endpoint: None,
+        magpie_url: None,
+    };
+    let state = zeron_dc_bot::state::AppState::new(config, client.clone());
+    let initial_session = state
+        .spawn_project_session(999888, "test-switch", None, "/tmp")
+        .await
+        .expect("spawn_project_session failed");
+    let initial_chat_id = initial_session.chat_id.clone();
+
+    // Query valid model for the available harness
+    let valid_model = client
+        .list_models(&available_harness)
+        .await
+        .ok()
+        .and_then(|m| m.into_iter().next())
+        .map(|m| m.id)
+        .unwrap_or_else(|| "default".to_string());
+
+    // Now switch harness/model
+    let switched = state
+        .set_harness_model_and_effort(999888, &available_harness, &valid_model, None)
+        .await
+        .expect("set_harness_model_and_effort failed");
+    assert_ne!(switched.chat_id, initial_chat_id, "chat_id should change when model/harness is updated");
+    assert_eq!(switched.harness, available_harness);
+    assert_eq!(switched.model, Some(valid_model));
+
+    // Clean up
+    let _ = client.archive_chat(&switched.chat_id, true).await;
+    let _ = client.archive_chat(&initial_chat_id, true).await;
     let _ = client.archive_chat(&side_chat.chat_id, true).await;
     let _ = client.archive_chat(&chat.chat_id, true).await;
 }

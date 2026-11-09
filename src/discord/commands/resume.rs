@@ -32,30 +32,34 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
         Ok(session) => {
             let _ = topic::update_channel_topic(ctx, channel_id, state).await;
 
-            let resp = CreateInteractionResponseMessage::new().content(format!(
-                "▶️ **Zeron Session Resumed**\n\
+            let resp = CreateInteractionResponseMessage::new()
+                .content(format!(
+                    "▶️ **Zeron Session Resumed**\n\
                  - **Session ID:** `{}`\n\
                  - **Kind:** `{}`\n\
                  - **Directory:** `{}`\n\
                  - **Harness:** `{}`\n\
                  - **Active Model:** `{}`\n\
                  Monitoring has resumed for this channel.",
-                session.chat_id,
-                session.kind,
-                session.project_dir,
-                session.harness,
-                session.model.as_deref().unwrap_or("harness default")
-            ));
+                    session.chat_id,
+                    session.kind,
+                    session.project_dir,
+                    session.harness,
+                    session.model.as_deref().unwrap_or("harness default")
+                ))
+                .ephemeral(true);
             command
                 .create_response(&ctx.http, CreateInteractionResponse::Message(resp))
                 .await?;
         }
         Err(e) => {
-            let resp = CreateInteractionResponseMessage::new().content(format!(
-                "⚠️ Could not resume session: {}\n\
+            let resp = CreateInteractionResponseMessage::new()
+                .content(format!(
+                    "⚠️ Could not resume session: {}\n\
                  Use `/spawn <directory>` or @mention the bot to create a new session.",
-                e
-            ));
+                    e
+                ))
+                .ephemeral(true);
             command
                 .create_response(&ctx.http, CreateInteractionResponse::Message(resp))
                 .await?;
