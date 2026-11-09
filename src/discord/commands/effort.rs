@@ -133,12 +133,29 @@ pub async fn autocomplete(
         ];
     }
 
-    let mut choices: Vec<AutocompleteChoice> = Vec::new();
+    let pref_effort = {
+        let prefs = state.preferences.read().await;
+        prefs.last_effort_by_harness.get(&harness).cloned()
+    };
+
+    let mut top_choices = Vec::new();
+    let mut other_choices = Vec::new();
+
     for lvl in levels {
         if current_input.is_empty() || lvl.to_lowercase().contains(&current_input) {
-            choices.push(AutocompleteChoice::new(lvl.clone(), lvl));
+            let is_top = pref_effort.as_deref() == Some(&lvl);
+            let choice = AutocompleteChoice::new(lvl.clone(), lvl);
+            if is_top {
+                top_choices.push(choice);
+            } else {
+                other_choices.push(choice);
+            }
         }
     }
+
+    let mut choices: Vec<AutocompleteChoice> = Vec::new();
+    choices.extend(top_choices);
+    choices.extend(other_choices);
     choices.truncate(25);
 
     let response = CreateAutocompleteResponse::new().set_choices(choices);

@@ -20,6 +20,33 @@ pub fn register() -> CreateCommand {
             .required(true)
             .set_autocomplete(true),
         )
+        .add_option(
+            CreateCommandOption::new(
+                CommandOptionType::String,
+                "harness",
+                "Choose your harness (optional)",
+            )
+            .required(false)
+            .set_autocomplete(true),
+        )
+        .add_option(
+            CreateCommandOption::new(
+                CommandOptionType::String,
+                "model",
+                "Model in the selected harness (optional)",
+            )
+            .required(false)
+            .set_autocomplete(true),
+        )
+        .add_option(
+            CreateCommandOption::new(
+                CommandOptionType::String,
+                "effort",
+                "Thinking level (optional)",
+            )
+            .required(false)
+            .set_autocomplete(true),
+        )
 }
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) -> BotResult<()> {
@@ -80,11 +107,40 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
 
     let guild_id = command.guild_id.map(|g| g.get());
 
+    let harness_option = command
+        .data
+        .options
+        .iter()
+        .find(|opt| opt.name == "harness")
+        .and_then(|opt| opt.value.as_str());
+
+    let model_option = command
+        .data
+        .options
+        .iter()
+        .find(|opt| opt.name == "model")
+        .and_then(|opt| opt.value.as_str());
+
+    let effort_option = command
+        .data
+        .options
+        .iter()
+        .find(|opt| opt.name == "effort")
+        .and_then(|opt| opt.value.as_str());
+
     let session = state
-        .spawn_project_session(channel_id, &channel_name, guild_id, &canonical_path)
+        .spawn_project_session_with_config(
+            channel_id,
+            &channel_name,
+            guild_id,
+            &canonical_path,
+            harness_option,
+            model_option,
+            effort_option,
+        )
         .await?;
 
-    // Update channel topic with model, skills, and MCP servers
+    // Update channel topic to reflect newly selected <harness>/<model>.<effort>
     let _ = topic::update_channel_topic(ctx, channel_id, state).await;
 
     let resp_text = format!(
@@ -92,11 +148,13 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
          - **Session ID:** `{}`\n\
          - **Directory:** `{}`\n\
          - **Harness:** `{}`\n\
-         - **Active Model:** `{}`",
+         - **Active Model:** `{}`\n\
+         - **Effort:** `{}`",
         session.chat_id,
         session.project_dir,
         session.harness,
-        session.model.as_deref().unwrap_or("harness default")
+        session.model.as_deref().unwrap_or("harness default"),
+        session.effort.as_deref().unwrap_or("default")
     );
 
     let resp = CreateInteractionResponseMessage::new()
@@ -114,15 +172,34 @@ pub async fn autocomplete(
     autocomplete: &CommandInteraction,
     state: &AppState,
 ) -> BotResult<()> {
-    let focused = autocomplete
+    // Determine which field is focused
+    let focused_option = autocomplete
         .data
         .options
         .iter()
-        .find(|opt| opt.name == "directory");
+        .find(|opt| matches!(&opt.value, CommandDataOptionValue::Autocomplete { .. }))
+        .or_else(|| {
+            autocomplete.data.options.iter().find(|opt| {
+                opt.name == "directory"
+                    || opt.name == "harness"
+                    || opt.name == "model"
+                    || opt.name == "effort"
+            })
+        });
 
-    let current_input = match focused {
+    let focused_name = focused_option
+        .map(|opt| opt.name.as_str())
+        .unwrap_or("directory");
+
+    // If harness, model, or effort is focused, delegate to model::autocomplete
+    if focused_name == "harness" || focused_name == "model" || focused_name == "effort" {
+        return crate::discord::commands::model::autocomplete(ctx, autocomplete, state).await;
+    }
+
+    let current_input = match focused_option {
         Some(opt) => match &opt.value {
             CommandDataOptionValue::String(s) => s.as_str().trim(),
+            CommandDataOptionValue::Autocomplete { value, .. } => value.as_str().trim(),
             _ => "",
         },
         None => "",

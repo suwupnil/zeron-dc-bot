@@ -27,6 +27,16 @@ pub enum SessionOrigin {
     Tag,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Preferences {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_harness: Option<String>,
+    #[serde(default)]
+    pub last_model_by_harness: HashMap<String, String>,
+    #[serde(default)]
+    pub last_effort_by_harness: HashMap<String, String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionData {
     pub chat_id: String,
@@ -61,12 +71,18 @@ pub struct AppState {
     pub zeron: ZeronClient,
     pub decision: DecisionClient,
     pub sessions: Arc<RwLock<HashMap<u64, SessionData>>>,
+    pub preferences: Arc<RwLock<Preferences>>,
     storage_path: PathBuf,
+    preferences_path: PathBuf,
 }
 
 impl AppState {
     pub fn new(config: Config, zeron: ZeronClient) -> Self {
         let storage_path = config.session_storage_path.clone();
+        let preferences_path = storage_path
+            .parent()
+            .map(|p| p.join("preferences.json"))
+            .unwrap_or_else(|| PathBuf::from("preferences.json"));
         let decision = DecisionClient::new(
             config.cloudflare_account_id.clone(),
             config.cloudflare_api_token.clone(),
@@ -78,12 +94,24 @@ impl AppState {
             zeron,
             decision,
             sessions: Arc::new(RwLock::new(HashMap::new())),
+            preferences: Arc::new(RwLock::new(Preferences::default())),
             storage_path,
+            preferences_path,
         }
     }
 
-    /// Load persisted sessions from file on startup
+    /// Load persisted sessions and preferences from file on startup
     pub async fn load_sessions(&self) -> BotResult<()> {
+        if self.preferences_path.exists() {
+            if let Ok(content) = tokio::fs::read_to_string(&self.preferences_path).await {
+                if let Ok(prefs) = serde_json::from_str::<Preferences>(&content) {
+                    let mut p = self.preferences.write().await;
+                    *p = prefs;
+                    info!("Restored preferences from {:?}", self.preferences_path);
+                }
+            }
+        }
+
         if !self.storage_path.exists() {
             return Ok(());
         }
@@ -128,6 +156,82 @@ impl AppState {
         Ok(())
     }
 
+    /// Persist preferences to disk
+    pub async fn save_preferences(&self) -> BotResult<()> {
+        let prefs = self.preferences.read().await;
+        let serialized = serde_json::to_string_pretty(&*prefs)?;
+        if let Some(parent) = self.preferences_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        tokio::fs::write(&self.preferences_path, serialized).await?;
+        debug!("Saved preferences to {:?}", self.preferences_path);
+        Ok(())
+    }
+
+    /// Record chosen harness, model, and effort in user preferences
+    pub async fn record_choice(
+        &self,
+        harness: &str,
+        model: Option<&str>,
+        effort: Option<&str>,
+    ) -> BotResult<()> {
+        let mut prefs = self.preferences.write().await;
+        prefs.last_harness = Some(harness.to_string());
+        if let Some(m) = model {
+            prefs
+                .last_model_by_harness
+                .insert(harness.to_string(), m.to_string());
+        }
+        if let Some(e) = effort {
+            prefs
+                .last_effort_by_harness
+                .insert(harness.to_string(), e.to_string());
+        }
+        drop(prefs);
+        self.save_preferences().await
+    }
+
+    /// Get last chosen harness or fallback to default
+    pub async fn get_preferred_harness(&self) -> String {
+        let prefs = self.preferences.read().await;
+        if let Some(ref h) = prefs.last_harness {
+            return h.clone();
+        }
+        drop(prefs);
+        self.resolve_harness().await
+    }
+
+    /// Get last chosen model for a given harness, or fallback to default model for that harness
+    pub async fn get_preferred_model_for_harness(&self, harness: &str) -> Option<String> {
+        let prefs = self.preferences.read().await;
+        if let Some(m) = prefs.last_model_by_harness.get(harness) {
+            return Some(m.clone());
+        }
+        drop(prefs);
+
+        // Fallback: check config if default_harness matches
+        if harness == self.config.default_harness {
+            if let Some(ref m) = self.config.default_model {
+                return Some(m.clone());
+            }
+        }
+
+        // Fallback: query Zeron models catalog and take the first model
+        if let Ok(models) = self.zeron.list_models(harness).await {
+            if let Some(first) = models.into_iter().next() {
+                return Some(first.id);
+            }
+        }
+
+        None
+    }
+
+    /// Get last chosen effort for a given harness
+    pub async fn get_preferred_effort_for_harness(&self, harness: &str) -> Option<String> {
+        let prefs = self.preferences.read().await;
+        prefs.last_effort_by_harness.get(harness).cloned()
+    }
+
     /// Retrieve an existing session by channel ID
     pub async fn get_session(&self, channel_id: u64) -> Option<SessionData> {
         let map = self.sessions.read().await;
@@ -153,12 +257,16 @@ impl AppState {
     }
 
     /// Spawn a project session assigned to a specific directory (via `/spawn`)
-    pub async fn spawn_project_session(
+    /// with optional harness, model, and effort overrides (defaulting to last chosen or defaults)
+    pub async fn spawn_project_session_with_config(
         &self,
         channel_id: u64,
         channel_name: &str,
         guild_id: Option<u64>,
         project_dir: &str,
+        harness_opt: Option<&str>,
+        model_opt: Option<&str>,
+        effort_opt: Option<&str>,
     ) -> BotResult<SessionData> {
         // If an old session existed, archive it
         let old_chat_id = {
@@ -169,21 +277,47 @@ impl AppState {
             let _ = self.zeron.archive_chat(&old_id, true).await;
         }
 
+        // Determine harness: override -> last preferred -> resolve default
+        let selected_harness = match harness_opt {
+            Some(h) if !h.trim().is_empty() => h.trim().to_string(),
+            _ => self.get_preferred_harness().await,
+        };
+
+        // Determine model: override -> last preferred for that harness -> default for that harness
+        let selected_model = match model_opt {
+            Some(m) if !m.trim().is_empty() => Some(m.trim().to_string()),
+            _ => self.get_preferred_model_for_harness(&selected_harness).await,
+        };
+
+        // Determine effort: override -> last preferred effort for that harness
+        let selected_effort = match effort_opt {
+            Some(e) if !e.trim().is_empty() => Some(e.trim().to_string()),
+            _ => self.get_preferred_effort_for_harness(&selected_harness).await,
+        };
+
+        // Record choices in persistent preferences
+        let _ = self
+            .record_choice(
+                &selected_harness,
+                selected_model.as_deref(),
+                selected_effort.as_deref(),
+            )
+            .await;
+
         info!(
-            "Spawning new project Zeron session for #{} ({}) in directory {}",
-            channel_name, channel_id, project_dir
+            "Spawning new project Zeron session for #{} ({}) in directory {} [{}/{:?}.{:?}]",
+            channel_name, channel_id, project_dir, selected_harness, selected_model, selected_effort
         );
 
-        let default_harness = self.resolve_harness().await;
-        let default_model = self.config.default_model.clone();
         let title = format!("#{} (Project)", channel_name);
 
         let create_args = CreateChatArgs {
             kind: Some("chat".to_string()),
             title: Some(title.clone()),
             cwd: Some(project_dir.to_string()),
-            harness: Some(default_harness.clone()),
-            model: default_model.clone(),
+            harness: Some(selected_harness.clone()),
+            model: selected_model.clone(),
+            reasoning: selected_effort.clone(),
             ..Default::default()
         };
 
@@ -199,9 +333,9 @@ impl AppState {
             guild_id,
             title,
             project_dir: project_dir.to_string(),
-            harness: default_harness,
-            model: default_model,
-            effort: None,
+            harness: selected_harness,
+            model: selected_model,
+            effort: selected_effort,
             created_at: now,
             last_active_at: now,
             origin: SessionOrigin::Spawn,
@@ -216,6 +350,26 @@ impl AppState {
 
         self.save_sessions().await?;
         Ok(session)
+    }
+
+    /// Spawn a project session assigned to a specific directory (via `/spawn`) using defaults
+    pub async fn spawn_project_session(
+        &self,
+        channel_id: u64,
+        channel_name: &str,
+        guild_id: Option<u64>,
+        project_dir: &str,
+    ) -> BotResult<SessionData> {
+        self.spawn_project_session_with_config(
+            channel_id,
+            channel_name,
+            guild_id,
+            project_dir,
+            None,
+            None,
+            None,
+        )
+        .await
     }
 
     /// Spawn a casual conversational session when tagged (@bot) without any project
@@ -674,6 +828,9 @@ Tool calls or actions from earlier ran on the previous provider; continue natura
         drop(map);
 
         self.save_sessions().await?;
+        let _ = self
+            .record_choice(harness_name, Some(model_name), effort)
+            .await;
         Ok(cloned)
     }
 

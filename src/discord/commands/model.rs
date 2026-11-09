@@ -18,13 +18,13 @@ pub fn register() -> CreateCommand {
             CreateCommandOption::new(
                 CommandOptionType::String,
                 "model",
-                "Models in the selected harness",
+                "Models in the selected harness (optional)",
             )
-            .required(true)
+            .required(false)
             .set_autocomplete(true),
         )
         .add_option(
-            CreateCommandOption::new(CommandOptionType::String, "effort", "Thinking level")
+            CreateCommandOption::new(CommandOptionType::String, "effort", "Thinking level (optional)")
                 .required(false)
                 .set_autocomplete(true),
         )
@@ -53,8 +53,8 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
         .and_then(|opt| opt.value.as_str());
 
     let harness_name = match harness_option {
-        Some(h) => h.trim(),
-        None => {
+        Some(h) if !h.trim().is_empty() => h.trim(),
+        _ => {
             let resp = CreateInteractionResponseMessage::new()
                 .content("❌ Missing required argument: `harness`")
                 .ephemeral(true);
@@ -65,20 +65,20 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
         }
     };
 
-    let model_name = match model_option {
-        Some(m) => m.trim(),
-        None => {
-            let resp = CreateInteractionResponseMessage::new()
-                .content("❌ Missing required argument: `model`")
-                .ephemeral(true);
-            command
-                .create_response(&ctx.http, CreateInteractionResponse::Message(resp))
-                .await?;
-            return Ok(());
-        }
+    // If model is not chosen, fallback to last chosen for this harness, or default for this harness
+    let resolved_model = match model_option {
+        Some(m) if !m.trim().is_empty() => m.trim().to_string(),
+        _ => state
+            .get_preferred_model_for_harness(harness_name)
+            .await
+            .unwrap_or_else(|| "default".to_string()),
     };
 
-    let effort_level = effort_option.map(|e| e.trim());
+    // If effort is not chosen, fallback to last chosen for this harness
+    let resolved_effort = match effort_option {
+        Some(e) if !e.trim().is_empty() => Some(e.trim().to_string()),
+        _ => state.get_preferred_effort_for_harness(harness_name).await,
+    };
 
     let channel_id = command.channel_id.get();
 
@@ -87,7 +87,12 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
     match existing {
         Some(s) if !s.is_closed => {
             state
-                .set_harness_model_and_effort(channel_id, harness_name, model_name, effort_level)
+                .set_harness_model_and_effort(
+                    channel_id,
+                    harness_name,
+                    &resolved_model,
+                    resolved_effort.as_deref(),
+                )
                 .await?;
         }
         _ => {
@@ -104,17 +109,17 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
         }
     };
 
-    // Update channel topic to reflect newly selected <harness>/<model>/<effort>
+    // Update channel topic to reflect newly selected <harness>/<model>.<effort>
     let _ = crate::discord::topic::update_channel_topic(ctx, channel_id, state).await;
 
     // Requirement 1: on model change, don't send the "🤖 Model Updated" message. Only update the topic.
-    // Acknowledge interaction silently (ephemeral or empty/deferred)
+    // Acknowledge interaction silently (ephemeral)
     let resp = CreateInteractionResponseMessage::new()
         .content(format!(
             "✅ Channel topic updated to `{}/{}.{}`",
             harness_name,
-            model_name,
-            effort_level.unwrap_or("default")
+            resolved_model,
+            resolved_effort.as_deref().unwrap_or("default")
         ))
         .ephemeral(true);
     command
@@ -159,7 +164,15 @@ pub async fn autocomplete(
 
     if focused_name == "harness" {
         // Query available harnesses from Zeron
+        let pref_harness = {
+            let prefs = state.preferences.read().await;
+            prefs.last_harness.clone()
+        };
+
         if let Ok(harnesses) = state.zeron.list_harnesses().await {
+            let mut top_choices = Vec::new();
+            let mut other_choices = Vec::new();
+
             for h in harnesses {
                 // Rule 1: Exclude internal mock testing fixture
                 if h.id == "mock" {
@@ -185,9 +198,18 @@ pub async fn autocomplete(
                     || h.name.to_lowercase().contains(&current_input)
                     || display_name.to_lowercase().contains(&current_input)
                 {
-                    choices.push(AutocompleteChoice::new(display_name, h.id));
+                    let is_top = pref_harness.as_deref() == Some(&h.id);
+                    let choice = AutocompleteChoice::new(display_name, h.id);
+                    if is_top {
+                        top_choices.push(choice);
+                    } else {
+                        other_choices.push(choice);
+                    }
                 }
             }
+
+            choices.extend(top_choices);
+            choices.extend(other_choices);
         }
     } else if focused_name == "model" {
         // "model" field autocomplete: list models in the chosen harness
@@ -213,7 +235,15 @@ pub async fn autocomplete(
                 .unwrap_or_else(|| state.config.default_harness.clone())
         });
 
+        let pref_model = {
+            let prefs = state.preferences.read().await;
+            prefs.last_model_by_harness.get(&harness).cloned()
+        };
+
         if let Ok(models) = state.zeron.list_models(&harness).await {
+            let mut top_choices = Vec::new();
+            let mut other_choices = Vec::new();
+
             for m in models {
                 let label = m.label.unwrap_or_else(|| m.id.clone());
                 let display_name = format!("{} ({})", label, harness);
@@ -221,9 +251,18 @@ pub async fn autocomplete(
                     || m.id.to_lowercase().contains(&current_input)
                     || display_name.to_lowercase().contains(&current_input)
                 {
-                    choices.push(AutocompleteChoice::new(display_name, m.id));
+                    let is_top = pref_model.as_deref() == Some(&m.id);
+                    let choice = AutocompleteChoice::new(display_name, m.id);
+                    if is_top {
+                        top_choices.push(choice);
+                    } else {
+                        other_choices.push(choice);
+                    }
                 }
             }
+
+            choices.extend(top_choices);
+            choices.extend(other_choices);
         }
     } else if focused_name == "effort" {
         // "effort" field autocomplete: dynamically fetch possible levels for harness / model
@@ -261,6 +300,11 @@ pub async fn autocomplete(
                 .unwrap_or_else(|| state.config.default_harness.clone())
         });
 
+        let pref_effort = {
+            let prefs = state.preferences.read().await;
+            prefs.last_effort_by_harness.get(&harness).cloned()
+        };
+
         let mut levels: Vec<String> = Vec::new();
 
         // 1. Try to fetch model-specific reasoning levels from list_models
@@ -295,11 +339,23 @@ pub async fn autocomplete(
             ];
         }
 
+        let mut top_choices = Vec::new();
+        let mut other_choices = Vec::new();
+
         for lvl in levels {
             if current_input.is_empty() || lvl.to_lowercase().contains(&current_input) {
-                choices.push(AutocompleteChoice::new(lvl.clone(), lvl));
+                let is_top = pref_effort.as_deref() == Some(&lvl);
+                let choice = AutocompleteChoice::new(lvl.clone(), lvl);
+                if is_top {
+                    top_choices.push(choice);
+                } else {
+                    other_choices.push(choice);
+                }
             }
         }
+
+        choices.extend(top_choices);
+        choices.extend(other_choices);
     }
 
     choices.truncate(25);
