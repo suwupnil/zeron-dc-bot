@@ -456,6 +456,7 @@ impl EventHandler for Handler {
 
         let is_first_tag_turn =
             session.origin == SessionOrigin::Tag && session.created_at == session.last_active_at;
+        let handoff_context_opt = self.state.take_handoff_context(channel_id).await;
         self.state.touch_session(channel_id).await;
 
         let typing = msg.channel_id.start_typing(&ctx.http);
@@ -465,7 +466,13 @@ impl EventHandler for Handler {
             msg.author.name, session.chat_id, session.origin, session.kind
         );
 
-        let formatted_user_msg = if is_first_tag_turn {
+        let formatted_user_msg = if let Some(handoff) = handoff_context_opt {
+            // If the user recently switched models/harnesses, inject the handoff context
+            format!(
+                "{}\n\n[Current User Message]:\n{}: {}",
+                handoff, msg.author.name, clean_text_prompt
+            )
+        } else if is_first_tag_turn {
             format!(
                 "[System instruction: Be conversational, natural and human-like. Do not use rigid formatting, bulleted lists, headers, or robotic grammar. Look like human generated, and send concise messages only unless asked otherwise.]\n\n{}: {}",
                 msg.author.name, clean_text_prompt

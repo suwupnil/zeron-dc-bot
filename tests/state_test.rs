@@ -54,6 +54,7 @@ async fn test_state_persistence_and_restore() {
                 last_active_at: 1000,
                 origin: SessionOrigin::Spawn,
                 is_closed: false,
+                handoff_context: None,
             },
         );
     }
@@ -111,6 +112,7 @@ async fn test_state_dir_and_model_update() {
                 last_active_at: 2000,
                 origin: SessionOrigin::Spawn,
                 is_closed: false,
+                handoff_context: None,
             },
         );
     }
@@ -156,6 +158,7 @@ async fn test_state_close_and_resume_marking() {
                 last_active_at: 3000,
                 origin: SessionOrigin::Spawn,
                 is_closed: false,
+                handoff_context: None,
             },
         );
     }

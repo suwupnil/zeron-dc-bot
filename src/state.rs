@@ -51,6 +51,8 @@ pub struct SessionData {
     pub origin: SessionOrigin,
     #[serde(default)]
     pub is_closed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub handoff_context: Option<String>,
 }
 
 #[derive(Clone)]
@@ -204,6 +206,7 @@ impl AppState {
             last_active_at: now,
             origin: SessionOrigin::Spawn,
             is_closed: false,
+            handoff_context: None,
         };
 
         {
@@ -273,6 +276,7 @@ impl AppState {
             last_active_at: now,
             origin: SessionOrigin::Tag,
             is_closed: false,
+            handoff_context: None,
         };
 
         {
@@ -363,6 +367,7 @@ impl AppState {
                         last_active_at: now,
                         origin: SessionOrigin::Spawn,
                         is_closed: false,
+                        handoff_context: None,
                     }
                 }
             };
@@ -493,6 +498,7 @@ impl AppState {
             last_active_at: now,
             origin: SessionOrigin::Spawn,
             is_closed: false,
+            handoff_context: None,
         };
 
         {
@@ -547,6 +553,47 @@ impl AppState {
                 session.project_dir.clone(),
                 session.origin.clone(),
             )
+        };
+
+        // Extract recent conversation transcript from the old chat so the new model inherits
+        // full memory of the conversation, exactly like Zeron's native provider handoff.
+        let handoff_context = match self.zeron.read_chat(&old_chat_id, 30, false).await {
+            Ok(transcript) if !transcript.messages.is_empty() => {
+                let mut history_lines = Vec::new();
+                for m in transcript.messages.iter() {
+                    let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("user");
+                    // Ignore empty system switch markers
+                    if role == "system" {
+                        continue;
+                    }
+                    if let Some(text) = m.get("text").and_then(|t| t.as_str()) {
+                        let trimmed = text.trim();
+                        if !trimmed.is_empty() {
+                            if role == "assistant" {
+                                history_lines.push(format!("Assistant: {}", trimmed));
+                            } else {
+                                history_lines.push(format!("User: {}", trimmed));
+                            }
+                        }
+                    }
+                }
+
+                if !history_lines.is_empty() {
+                    let formatted_history = history_lines.join("\n\n");
+                    Some(format!(
+                        "[System instruction: This conversation was started with a different AI provider and you are now taking over. \
+The earlier messages are below as context; answer requests as the continuation of that conversation. \
+Tool calls or actions from earlier ran on the previous provider; continue naturally from where the conversation left off.]\n\n\
+--- Prior Conversation History ---\n\
+{}\n\
+--- End Prior Conversation History ---",
+                        formatted_history
+                    ))
+                } else {
+                    None
+                }
+            }
+            _ => None,
         };
 
         // Try creating the new Zeron chat session with the updated harness/model.
@@ -621,6 +668,7 @@ impl AppState {
         session.harness = harness_name.to_string();
         session.model = Some(model_name.to_string());
         session.effort = effort.map(|e| e.to_string());
+        session.handoff_context = handoff_context;
         session.last_active_at = now;
         let cloned = session.clone();
         drop(map);
@@ -674,6 +722,20 @@ impl AppState {
             effort.as_deref(),
         )
         .await
+    }
+
+    /// Retrieve and clear any pending handoff context for the given channel.
+    pub async fn take_handoff_context(&self, channel_id: u64) -> Option<String> {
+        let mut map = self.sessions.write().await;
+        if let Some(session) = map.get_mut(&channel_id) {
+            let ctx = session.handoff_context.take();
+            if ctx.is_some() {
+                let _ = self.save_sessions().await;
+            }
+            ctx
+        } else {
+            None
+        }
     }
 
     /// Reset / recreate a session for a channel or thread
