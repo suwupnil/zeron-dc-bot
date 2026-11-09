@@ -7,15 +7,10 @@ use serenity::all::{
 };
 
 pub fn register() -> CreateCommand {
-    CreateCommand::new("mcp")
-        .description("List available and active MCP servers")
+    CreateCommand::new("mcp").description("List available and active MCP servers")
 }
 
-pub async fn run(
-    ctx: &Context,
-    command: &CommandInteraction,
-    state: &AppState,
-) -> BotResult<()> {
+pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) -> BotResult<()> {
     let (_, mcps) = topic::get_available_skills_and_mcp(state).await;
 
     let content = if mcps.is_empty() {
@@ -24,8 +19,7 @@ pub async fn run(
         format!(
             "🔌 **Available MCP Servers ({})**\n\n{}",
             mcps.len(),
-            mcps
-                .iter()
+            mcps.iter()
                 .map(|m| format!("• `{}`", m))
                 .collect::<Vec<_>>()
                 .join("\n")

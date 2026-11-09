@@ -135,10 +135,7 @@ pub async fn autocomplete(
             .data
             .options
             .iter()
-            .find(|opt| match &opt.value {
-                CommandDataOptionValue::Autocomplete { .. } => true,
-                _ => false,
-            })
+            .find(|opt| matches!(&opt.value, CommandDataOptionValue::Autocomplete { .. }))
             .or_else(|| {
                 autocomplete.data.options.iter().find(|opt| {
                     opt.name == "effort" || opt.name == "model" || opt.name == "harness"

@@ -58,12 +58,18 @@ async fn test_state_persistence_and_restore() {
     }
 
     // Save to disk
-    state.save_sessions().await.expect("Failed to save sessions");
+    state
+        .save_sessions()
+        .await
+        .expect("Failed to save sessions");
     assert!(session_file.exists());
 
     // Create a new AppState instance pointing to the same file and load
     let state2 = AppState::new(config, zeron);
-    state2.load_sessions().await.expect("Failed to load sessions");
+    state2
+        .load_sessions()
+        .await
+        .expect("Failed to load sessions");
 
     let restored = state2.get_session(111222333).await;
     assert!(restored.is_some());
@@ -109,7 +115,10 @@ async fn test_state_dir_and_model_update() {
     }
 
     // Update dir
-    let updated = state.set_project_dir(444555, "/new/project/dir").await.unwrap();
+    let updated = state
+        .set_project_dir(444555, "/new/project/dir")
+        .await
+        .unwrap();
     assert_eq!(updated.project_dir, "/new/project/dir");
 
     // Update model
