@@ -20,7 +20,11 @@ fn test_split_preserves_code_blocks() {
     let code_msg = "Here is the code:\n```rust\nfn main() {\n    let answer = 42;\n    println!(\"{}\", answer);\n}\n```\nDone.";
     // Split with small limit to force chunking across code block
     let chunks = MessageChunker::split_message(code_msg, 60);
-    assert!(chunks.len() >= 2, "Expected multiple chunks, got {}", chunks.len());
+    assert!(
+        chunks.len() >= 2,
+        "Expected multiple chunks, got {}",
+        chunks.len()
+    );
 
     // First chunk should have closed the block
     let first = &chunks[0];

@@ -220,9 +220,9 @@ impl DecisionClient {
             let prev_author_lower = prev_author.to_lowercase();
             let is_prev_bot = prev_author_lower.contains("zeron")
                 || prev_author_lower.contains("bot")
-                || dynamic_bot_name.as_deref().map_or(false, |name| {
-                    !name.is_empty() && prev_author_lower.contains(name)
-                });
+                || dynamic_bot_name
+                    .as_deref()
+                    .is_some_and(|name| !name.is_empty() && prev_author_lower.contains(name));
 
             if is_prev_bot {
                 let follow_up_starters = [

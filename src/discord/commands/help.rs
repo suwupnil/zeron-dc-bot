@@ -5,14 +5,10 @@ use serenity::all::{
 };
 
 pub fn register() -> CreateCommand {
-    CreateCommand::new("help")
-        .description("Learn how to use the Zeron Discord Bridge Bot")
+    CreateCommand::new("help").description("Learn how to use the Zeron Discord Bridge Bot")
 }
 
-pub async fn run(
-    ctx: &Context,
-    command: &CommandInteraction,
-) -> BotResult<()> {
+pub async fn run(ctx: &Context, command: &CommandInteraction) -> BotResult<()> {
     let help_text = "\
 ### 🚀 Zeron Discord Bridge Bot
 

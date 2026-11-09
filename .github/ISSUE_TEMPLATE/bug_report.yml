@@ -1,0 +1,90 @@
+name: "🐛 Bug Report"
+description: File a bug report to help us improve zeron-dc-bot
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting an issue! Please provide as much detail as possible to help diagnose and resolve the bug.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: Describe what happened...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior.
+      placeholder: |
+        1. Start the bot with `...`
+        2. In Discord, execute `/spawn ...`
+        3. Send message `...`
+        4. See error `...`
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: A clear and concise description of what you expected to happen.
+      placeholder: What did you expect to happen instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Log Output
+      description: Please copy and paste any relevant logs or terminal output. Please sanitize any sensitive credentials/tokens!
+      render: shell
+      placeholder: |
+        2026-03-31T12:00:00Z INFO zeron_dc_bot: ...
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component Affected
+      description: Which part of zeron-dc-bot is affected?
+      options:
+        - "Discord Gateway / Event Handling"
+        - "Slash Commands (/spawn, /model, /effort, etc.)"
+        - "Decision Model / Chatter Suppression"
+        - "Zeron MCP Client / JSON-RPC"
+        - "Session Persistence (sessions.json)"
+        - "Message Formatter / Chunking"
+        - "Build / CI / CD"
+        - "Other"
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment Info
+      description: Please provide your environment details.
+      value: |
+        - OS: [e.g. Ubuntu 24.04 LTS aarch64, macOS 15.0 Apple Silicon]
+        - Rust Version: [e.g. rustc 1.85.0 or 1.99.1]
+        - Zeron Engine Version: [e.g. zeron 1.0.0]
+        - Discord Guild Type: [e.g. Community Server, Private Server]
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checkboxes
+    attributes:
+      label: Sanity Check
+      description: Please verify before submitting.
+      options:
+        - label: I have verified that no sensitive credentials (bot tokens, API keys, etc.) are included in this issue.
+          required: true
+        - label: I have searched existing issues to ensure this is not a duplicate.
+          required: true

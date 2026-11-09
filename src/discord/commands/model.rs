@@ -38,11 +38,7 @@ pub fn register() -> CreateCommand {
         )
 }
 
-pub async fn run(
-    ctx: &Context,
-    command: &CommandInteraction,
-    state: &AppState,
-) -> BotResult<()> {
+pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) -> BotResult<()> {
     let harness_option = command
         .data
         .options
@@ -142,23 +138,21 @@ pub async fn autocomplete(
     state: &AppState,
 ) -> BotResult<()> {
     // Determine which field is currently focused by the user
-    let focused_option = autocomplete
-        .data
-        .options
-        .iter()
-        .find(|opt| match &opt.value {
-            CommandDataOptionValue::Autocomplete { .. } => true,
-            _ => false,
-        })
-        .or_else(|| {
-            autocomplete
-                .data
-                .options
-                .iter()
-                .find(|opt| opt.name == "effort" || opt.name == "model" || opt.name == "harness")
-        });
+    let focused_option =
+        autocomplete
+            .data
+            .options
+            .iter()
+            .find(|opt| matches!(&opt.value, CommandDataOptionValue::Autocomplete { .. }))
+            .or_else(|| {
+                autocomplete.data.options.iter().find(|opt| {
+                    opt.name == "effort" || opt.name == "model" || opt.name == "harness"
+                })
+            });
 
-    let focused_name = focused_option.map(|opt| opt.name.as_str()).unwrap_or("harness");
+    let focused_name = focused_option
+        .map(|opt| opt.name.as_str())
+        .unwrap_or("harness");
 
     let current_input = match focused_option {
         Some(opt) => match &opt.value {
@@ -211,7 +205,9 @@ pub async fn autocomplete(
             .iter()
             .find(|opt| opt.name == "harness")
             .and_then(|opt| match &opt.value {
-                CommandDataOptionValue::String(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+                CommandDataOptionValue::String(s) if !s.trim().is_empty() => {
+                    Some(s.trim().to_string())
+                }
                 _ => None,
             });
 
@@ -245,7 +241,9 @@ pub async fn autocomplete(
             .iter()
             .find(|opt| opt.name == "harness")
             .and_then(|opt| match &opt.value {
-                CommandDataOptionValue::String(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+                CommandDataOptionValue::String(s) if !s.trim().is_empty() => {
+                    Some(s.trim().to_string())
+                }
                 _ => None,
             });
 
@@ -255,7 +253,9 @@ pub async fn autocomplete(
             .iter()
             .find(|opt| opt.name == "model")
             .and_then(|opt| match &opt.value {
-                CommandDataOptionValue::String(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+                CommandDataOptionValue::String(s) if !s.trim().is_empty() => {
+                    Some(s.trim().to_string())
+                }
                 _ => None,
             });
 

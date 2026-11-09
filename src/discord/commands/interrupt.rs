@@ -10,11 +10,7 @@ pub fn register() -> CreateCommand {
         .description("Stop any currently running agent turn in this channel / thread")
 }
 
-pub async fn run(
-    ctx: &Context,
-    command: &CommandInteraction,
-    state: &AppState,
-) -> BotResult<()> {
+pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) -> BotResult<()> {
     let channel_id = command.channel_id.get();
     let session = state.get_session(channel_id).await;
 
