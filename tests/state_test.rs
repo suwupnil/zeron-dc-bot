@@ -20,6 +20,7 @@ fn make_test_config(storage_path: PathBuf) -> Config {
         cloudflare_api_token: None,
         cloudflare_model: "@cf/cloudflare/clef-flash".to_string(),
         cloudflare_ai_endpoint: None,
+        magpie_url: None,
     }
 }
 

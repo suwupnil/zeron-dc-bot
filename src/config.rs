@@ -17,6 +17,7 @@ pub struct Config {
     pub cloudflare_api_token: Option<String>,
     pub cloudflare_model: String,
     pub cloudflare_ai_endpoint: Option<String>,
+    pub magpie_url: Option<String>,
 }
 
 impl Config {
@@ -73,6 +74,7 @@ impl Config {
         let cloudflare_model = std::env::var("CLOUDFLARE_MODEL")
             .unwrap_or_else(|_| "@cf/cloudflare/clef-flash".to_string());
         let cloudflare_ai_endpoint = std::env::var("CLOUDFLARE_AI_ENDPOINT").ok();
+        let magpie_url = std::env::var("MAGPIE_URL").ok();
 
         Ok(Self {
             discord_token,
@@ -89,6 +91,7 @@ impl Config {
             cloudflare_api_token,
             cloudflare_model,
             cloudflare_ai_endpoint,
+            magpie_url,
         })
     }
 }

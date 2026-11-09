@@ -1,5 +1,5 @@
 use crate::discord::commands::{
-    close, effort, help, interrupt, mcp, model, resume, skills, spawn, status,
+    close, effort, help, interrupt, magpie, mcp, model, resume, skills, spawn, status,
 };
 use crate::discord::formatter::MessageChunker;
 use crate::discord::topic;
@@ -64,6 +64,7 @@ impl EventHandler for Handler {
             effort::register(),
             skills::register(),
             mcp::register(),
+            magpie::register(),
             status::register(),
             interrupt::register(),
             help::register(),
@@ -216,11 +217,12 @@ impl EventHandler for Handler {
                 let existing_session = self.state.get_session(channel_id).await;
                 let has_active_session = existing_session.as_ref().is_some_and(|s| !s.is_closed);
 
-                // Requirement 4: Don't allow any command other than /spawn or /resume if no zeron session is linked
+                // Requirement 4: Don't allow any command other than /spawn, /resume, /help, /magpie if no zeron session is linked
                 if !has_active_session
                     && cmd_name != "spawn"
                     && cmd_name != "resume"
                     && cmd_name != "help"
+                    && cmd_name != "magpie"
                 {
                     let resp = serenity::all::CreateInteractionResponseMessage::new()
                         .content(
@@ -245,6 +247,7 @@ impl EventHandler for Handler {
                     "effort" => effort::run(&ctx, &command, &self.state).await,
                     "skills" => skills::run(&ctx, &command, &self.state).await,
                     "mcp" => mcp::run(&ctx, &command, &self.state).await,
+                    "magpie" => magpie::run(&ctx, &command, &self.state).await,
                     "status" => status::run(&ctx, &command, &self.state).await,
                     "interrupt" => interrupt::run(&ctx, &command, &self.state).await,
                     "help" => help::run(&ctx, &command).await,

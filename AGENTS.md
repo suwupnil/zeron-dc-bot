@@ -32,7 +32,8 @@ Comprehensive technical architecture, operating model, and guidelines for AI age
 │         Slash Commands        │          Channel Messages        │        Thread Lifecycle     │
 │   (/spawn, /model, /effort,   │  • Extract text (strip media)    │  • thread_create:           │
 │    /close, /resume, /skills,  │  • Decision Model / Heuristic    │    forks Zeron side chat    │
-│    /mcp, /status, /interrupt) │  • Route to active Zeron chat    │    from parent workspace    │
+│    /mcp, /magpie, /status,    │  • Route to active Zeron chat    │    from parent workspace    │
+│    /interrupt)                │                                  │                             │
 └───────────────┬───────────────┴──────────────────┬───────────────┴──────────────┬──────────────┘
                 │                                  │                              │
                 ▼                                  ▼                              ▼
@@ -66,7 +67,7 @@ Comprehensive technical architecture, operating model, and guidelines for AI age
 | [`src/discord/handler.rs`](/zeron-dc-bot/src/discord/handler.rs) | Serenity `EventHandler` implementing slash command routing, message triage, and thread forking. |
 | [`src/discord/formatter.rs`](/zeron-dc-bot/src/discord/formatter.rs) | 2000-character boundary splitter preserving markdown code fences (` ``` `). |
 | [`src/discord/topic.rs`](/zeron-dc-bot/src/discord/topic.rs) | Channel topic synchronization (`<harness>/<model>.<effort>`) and recursive skill/MCP scanner. |
-| [`src/discord/commands/`](/zeron-dc-bot/src/discord/commands/) | Slash command implementations: `spawn`, `close`, `resume`, `model`, `effort`, `skills`, `mcp`, `status`, `interrupt`, `help`. |
+| [`src/discord/commands/`](/zeron-dc-bot/src/discord/commands/) | Slash command implementations: `spawn`, `close`, `resume`, `model`, `effort`, `skills`, `mcp`, `magpie`, `status`, `interrupt`, `help`. |
 
 ---
 
@@ -83,7 +84,7 @@ Comprehensive technical architecture, operating model, and guidelines for AI age
    - If a session is already active, `@mention` does **not** recreate the session; it routes the message into the active conversation.
    - Casual sessions are marked `SessionOrigin::Tag` and archived in Zeron without a project directory.
 4. **Enforcement:**
-   - Any operational slash command other than `/spawn`, `/resume`, or `/help` is blocked if no active session is linked to the channel.
+   - Any operational slash command other than `/spawn`, `/resume`, `/help`, or `/magpie` is blocked if no active session is linked to the channel.
 
 ### 4.2 Decision Model & Chatter Suppression
 - In channels with an active session, if the bot is **not** explicitly @mentioned or replied to:
@@ -127,6 +128,11 @@ Comprehensive technical architecture, operating model, and guidelines for AI age
 - **`/resume [session_id]`:**
   - Without argument: Re-activates the previously closed session of this channel.
   - With argument: Switches/resumes the specific Zeron session ID, ensuring that no other active Discord channel is bound to that session ID.
+
+### 4.7 `/magpie` Discord Embedded Activity
+- Triggers Discord's native `LAUNCH_ACTIVITY` response (Type 12) to open the embedded Magpie UI iframe inside Discord.
+- If the application does not yet have Activities enabled in the Discord Developer Portal, it returns a graceful ephemeral guide with setup instructions and a direct link.
+- Available globally across channels without requiring an active Zeron chat session.
 
 ---
 

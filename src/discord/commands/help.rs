@@ -18,8 +18,12 @@ Connect your Discord channels and threads to your local **Zeron** coding agents.
 #### 🛠️ Slash Commands
 - `/spawn <directory>`: Spawn a new project session linked to a host directory (creates directory if missing). Enables side chats, thought process tracking, and keeps channel topic populated with available Skills and MCP tools.
 - `/close`: End the current session and stop monitoring the channel.
-- `/resume`: Resume monitoring a previously closed session in this channel.
-- `/model <name>`: Switch the active AI model for this session (updates channel topic).
+- `/resume [session_id]`: Resume monitoring a previously closed session in this channel, or attach to a specific session ID.
+- `/model <harness> <model> [effort]`: Switch the active AI harness, model, and thinking effort for this session.
+- `/effort <level>`: Switch the reasoning/thinking effort level for the active model.
+- `/skills`: Ephemeral list of detected Skills across local agent harnesses.
+- `/mcp`: Ephemeral list of configured MCP servers and tools.
+- `/magpie`: Launch the Magpie Web UI Activity (or configure embedded activity link).
 - `/status`: Inspect active chat session, origin, model, harness, directory, and monitoring state.
 - `/interrupt`: Stop a running agent turn immediately.
 - `/help`: Show this guide.
