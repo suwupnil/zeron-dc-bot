@@ -10,9 +10,13 @@ pub fn register() -> CreateCommand {
     CreateCommand::new("model")
         .description("Change the harness, model or the effort level")
         .add_option(
-            CreateCommandOption::new(CommandOptionType::String, "harness", "Choose your harness")
-                .required(true)
-                .set_autocomplete(true),
+            CreateCommandOption::new(
+                CommandOptionType::String,
+                "harness",
+                "Choose your harness (optional)",
+            )
+            .required(false)
+            .set_autocomplete(true),
         )
         .add_option(
             CreateCommandOption::new(
@@ -52,49 +56,12 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
         .find(|opt| opt.name == "effort")
         .and_then(|opt| opt.value.as_str());
 
-    let harness_name = match harness_option {
-        Some(h) if !h.trim().is_empty() => h.trim(),
-        _ => {
-            let resp = CreateInteractionResponseMessage::new()
-                .content("❌ Missing required argument: `harness`")
-                .ephemeral(true);
-            command
-                .create_response(&ctx.http, CreateInteractionResponse::Message(resp))
-                .await?;
-            return Ok(());
-        }
-    };
-
-    // If model is not chosen, fallback to last chosen for this harness, or default for this harness
-    let resolved_model = match model_option {
-        Some(m) if !m.trim().is_empty() => m.trim().to_string(),
-        _ => state
-            .get_preferred_model_for_harness(harness_name)
-            .await
-            .unwrap_or_else(|| "default".to_string()),
-    };
-
-    // If effort is not chosen, fallback to last chosen for this harness
-    let resolved_effort = match effort_option {
-        Some(e) if !e.trim().is_empty() => Some(e.trim().to_string()),
-        _ => state.get_preferred_effort_for_harness(harness_name).await,
-    };
-
     let channel_id = command.channel_id.get();
 
     // Verify session exists and is active (sessions should only be created via /spawn or @tag)
     let existing = state.get_session(channel_id).await;
     match existing {
-        Some(s) if !s.is_closed => {
-            state
-                .set_harness_model_and_effort(
-                    channel_id,
-                    harness_name,
-                    &resolved_model,
-                    resolved_effort.as_deref(),
-                )
-                .await?;
-        }
+        Some(s) if !s.is_closed => {}
         _ => {
             let resp = CreateInteractionResponseMessage::new()
                 .content(
@@ -108,6 +75,36 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
             return Ok(());
         }
     };
+
+    // If harness is not provided, shift to the previously chosen harness configuration
+    let harness_name = match harness_option {
+        Some(h) if !h.trim().is_empty() => h.trim().to_string(),
+        _ => state.get_preferred_harness().await,
+    };
+
+    // If model is not chosen, fallback to last chosen for this harness, or default for this harness
+    let resolved_model = match model_option {
+        Some(m) if !m.trim().is_empty() => m.trim().to_string(),
+        _ => state
+            .get_preferred_model_for_harness(&harness_name)
+            .await
+            .unwrap_or_else(|| "default".to_string()),
+    };
+
+    // If effort is not chosen, fallback to last chosen for this harness
+    let resolved_effort = match effort_option {
+        Some(e) if !e.trim().is_empty() => Some(e.trim().to_string()),
+        _ => state.get_preferred_effort_for_harness(&harness_name).await,
+    };
+
+    state
+        .set_harness_model_and_effort(
+            channel_id,
+            &harness_name,
+            &resolved_model,
+            resolved_effort.as_deref(),
+        )
+        .await?;
 
     // Update channel topic to reflect newly selected <harness>/<model>.<effort>
     let _ = crate::discord::topic::update_channel_topic(ctx, channel_id, state).await;
@@ -228,12 +225,18 @@ pub async fn autocomplete(
         let channel_id = autocomplete.channel_id.get();
         let session = state.get_session(channel_id).await;
 
-        let harness = selected_harness.unwrap_or_else(|| {
-            session
-                .as_ref()
-                .map(|s| s.harness.clone())
-                .unwrap_or_else(|| state.config.default_harness.clone())
-        });
+        let harness = match selected_harness {
+            Some(h) => h,
+            None => {
+                let prefs = state.preferences.read().await;
+                prefs.last_harness.clone().unwrap_or_else(|| {
+                    session
+                        .as_ref()
+                        .map(|s| s.harness.clone())
+                        .unwrap_or_else(|| state.config.default_harness.clone())
+                })
+            }
+        };
 
         let pref_model = {
             let prefs = state.preferences.read().await;
@@ -293,12 +296,18 @@ pub async fn autocomplete(
         let channel_id = autocomplete.channel_id.get();
         let session = state.get_session(channel_id).await;
 
-        let harness = selected_harness.unwrap_or_else(|| {
-            session
-                .as_ref()
-                .map(|s| s.harness.clone())
-                .unwrap_or_else(|| state.config.default_harness.clone())
-        });
+        let harness = match selected_harness {
+            Some(h) => h,
+            None => {
+                let prefs = state.preferences.read().await;
+                prefs.last_harness.clone().unwrap_or_else(|| {
+                    session
+                        .as_ref()
+                        .map(|s| s.harness.clone())
+                        .unwrap_or_else(|| state.config.default_harness.clone())
+                })
+            }
+        };
 
         let pref_effort = {
             let prefs = state.preferences.read().await;
@@ -366,4 +375,26 @@ pub async fn autocomplete(
         .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_model_command_all_options_optional() {
+        let cmd = register();
+        let json = serde_json::to_value(&cmd).unwrap();
+        let options = json.get("options").and_then(|o| o.as_array()).unwrap();
+        assert_eq!(options.len(), 3);
+
+        for opt in options {
+            let required = opt.get("required").and_then(|r| r.as_bool()).unwrap_or(false);
+            assert!(
+                !required,
+                "Option '{}' should be optional (required=false)",
+                opt.get("name").and_then(|n| n.as_str()).unwrap_or("")
+            );
+        }
+    }
 }

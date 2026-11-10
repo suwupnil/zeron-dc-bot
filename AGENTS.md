@@ -97,9 +97,10 @@ Comprehensive technical architecture, operating model, and guidelines for AI age
 
 ### 4.3 Harness & Model Autocomplete Rules
 - **`/model` arguments:**
-  1. `harness` *(required)*
-  2. `model` *(required)*
+  1. `harness` *(optional)*
+  2. `model` *(optional)*
   3. `effort` *(optional)*
+  - Running `/model` without arguments automatically shifts to the previously chosen model configuration (or default).
 - **Harness Autocomplete:**
   - Mock internal fixtures (`id == "mock"`) are strictly excluded.
   - Harnesses with `installed == false` are hidden.
