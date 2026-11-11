@@ -238,9 +238,15 @@ else
 
     chmod +x "$TMP_DIR/zeron-dc-bot"
 
-    run_as_root mkdir -p "$BIN_DIR"
-    run_as_root cp "$TMP_DIR/zeron-dc-bot" "$BIN_DIR/zeron-dc-bot"
-    run_as_root chmod +x "$BIN_DIR/zeron-dc-bot"
+    if [ -w "$BIN_DIR" ] || (! [ -e "$BIN_DIR" ] && [ -w "$(dirname "$BIN_DIR")" ]); then
+        mkdir -p "$BIN_DIR"
+        cp "$TMP_DIR/zeron-dc-bot" "$BIN_DIR/zeron-dc-bot"
+        chmod +x "$BIN_DIR/zeron-dc-bot"
+    else
+        run_as_root mkdir -p "$BIN_DIR"
+        run_as_root cp "$TMP_DIR/zeron-dc-bot" "$BIN_DIR/zeron-dc-bot"
+        run_as_root chmod +x "$BIN_DIR/zeron-dc-bot"
+    fi
 
     printf "%b✔ Binary successfully installed to %s/zeron-dc-bot%b\n\n" "$GREEN" "$BIN_DIR" "$RESET"
 fi
