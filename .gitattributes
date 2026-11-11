@@ -1,0 +1,9 @@
+*.md linguist-language=Markdown
+*.sh linguist-language=Shell
+*.js linguist-language=JavaScript
+*.toml linguist-language=TOML
+*.jsonc linguist-language=JSON
+*.json linguist-language=JSON
+*.html linguist-language=HTML
+.git* linguist-language="Git Attributes"
+*.yml linguist-language=YAML

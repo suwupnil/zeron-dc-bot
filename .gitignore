@@ -31,3 +31,6 @@ Thumbs.db
 firebase-debug.log
 cloudflare/worker/.wrangler/
 cloudflare/worker/wrangler.jsonc
+
+.agents/
+.gemini/
