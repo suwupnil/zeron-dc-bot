@@ -1,0 +1,14 @@
+{
+  "name": "magpie-discord-activity-worker",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker reverse-proxy for Magpie Discord Embedded Activity",
+  "main": "src/index.js",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^4.160.0"
+  }
+}

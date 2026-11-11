@@ -68,6 +68,7 @@ Comprehensive technical architecture, operating model, and guidelines for AI age
 | [`src/discord/formatter.rs`](/zeron-dc-bot/src/discord/formatter.rs) | 2000-character boundary splitter preserving markdown code fences (` ``` `). |
 | [`src/discord/topic.rs`](/zeron-dc-bot/src/discord/topic.rs) | Channel topic synchronization (`<harness>/<model>.<effort>`) and recursive skill/MCP scanner. |
 | [`src/discord/commands/`](/zeron-dc-bot/src/discord/commands/) | Slash command implementations: `spawn`, `close`, `resume`, `model`, `effort`, `skills`, `mcp`, `magpie`, `status`, `interrupt`, `help`. |
+| [`cloudflare/`](/zeron-dc-bot/cloudflare) | Cloudflare Worker reverse-proxy and VM automation scripts for Discord Embedded Activities (auto-auth, self-healing origin sync, Ed25519 verification). |
 
 ---
 

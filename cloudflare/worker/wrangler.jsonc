@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "magpie-activity",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": true,
+  "kv_namespaces": [
+    {
+      "binding": "MAGPIE_KV",
+      "id": "<YOUR_KV_NAMESPACE_ID>"
+    }
+  ],
+  "vars": {
+    "TARGET_ORIGIN": "https://<YOUR_TUNNEL>.trycloudflare.com"
+  }
+}
