@@ -95,3 +95,26 @@ impl Config {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_parsing_defaults() {
+        std::env::set_var("DISCORD_TOKEN", "test_token");
+        std::env::set_var("APPLICATION_ID", "123456789012345678");
+        std::env::set_var("DEFAULT_PROJECT_DIR", "/tmp/projects");
+        std::env::set_var("MAGPIE_URL", "https://activity.example.com");
+
+        let config = Config::from_env().expect("Config should parse cleanly");
+        assert_eq!(config.discord_token, "test_token");
+        assert_eq!(config.application_id, Some(123456789012345678));
+        assert_eq!(config.default_project_dir, PathBuf::from("/tmp/projects"));
+        assert_eq!(
+            config.magpie_url,
+            Some("https://activity.example.com".to_string())
+        );
+        assert_eq!(config.cloudflare_model, "@cf/cloudflare/clef-flash");
+    }
+}

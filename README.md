@@ -93,7 +93,7 @@ curl -fsSL https://raw.githubusercontent.com/suwupnil/zeron-dc-bot/main/scripts/
 1. **GitHub Actions Prebuilt Binary:** Automatically detects your architecture (`x86_64` or `aarch64` / `arm64`) and downloads the precompiled binary built by GitHub Actions into `/usr/local/bin/zeron-dc-bot`. No Rust toolchain or build dependencies required on the VM.
 2. **Terminal Configuration Wizard:** Guides you step-by-step through setting up `.env`:
    - **Mandatory Discord Keys:** Discord Bot Token (`DISCORD_TOKEN`) and Application ID (`APPLICATION_ID`).
-   - **Zeron Settings:** Binary path (`ZERON_PATH`), default agent harness (`DEFAULT_HARNESS`), and optional default model.
+   - **Zeron Settings:** Binary path (`ZERON_PATH`), default agent harness (`DEFAULT_HARNESS`), optional default model (`DEFAULT_MODEL`), and default project workspace directory (`DEFAULT_PROJECT_DIR`).
    - **Cloudflare Clef Filter:** Prompts if you would like to enable Cloudflare Clef (`@cf/cloudflare/clef-flash`) for multi-user channels. If yes, it collects your Account ID and API token. If no, the bot automatically uses the built-in conversational heuristic fallback.
    - **Magpie Activity:** Optional URL for Discord Embedded Activity.
 3. **Automated systemd Service (Linux):** Configures and starts `/etc/systemd/system/zeron-dc-bot.service` automatically so your bot runs persistently across reboots.

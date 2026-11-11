@@ -36,16 +36,19 @@ prompt_read() {
     elif [ -t 0 ]; then
         # stdin is directly attached to a terminal
         printf "%b" "$prompt_msg"
-        read -r input
+        read -r input || input=""
     elif [ -c /dev/tty ]; then
         # stdin is piped (e.g. curl ... | bash), read from /dev/tty
         printf "%b" "$prompt_msg" > /dev/tty
-        read -r input < /dev/tty
+        read -r input < /dev/tty || input=""
     else
         # Fallback
         printf "%b" "$prompt_msg"
         read -r input || input=""
     fi
+
+    # Strip leading/trailing whitespace and carriage returns
+    input="$(echo "$input" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | tr -d '\r')"
 
     if [ -z "$input" ] && [ -n "$default_val" ]; then
         input="$default_val"
@@ -59,17 +62,24 @@ prompt_secret() {
     local var_name="$2"
     local input=""
 
-    if [ -t 0 ]; then
+    if [ "${NON_INTERACTIVE:-0}" = "1" ]; then
         printf "%b" "$prompt_msg"
-        read -r -s input
+        read -r input || input=""
+    elif [ -t 0 ]; then
+        printf "%b" "$prompt_msg"
+        read -r -s input || input=""
         echo ""
     elif [ -c /dev/tty ]; then
         printf "%b" "$prompt_msg" > /dev/tty
-        read -r -s input < /dev/tty
+        read -r -s input < /dev/tty || input=""
         echo "" > /dev/tty
     else
-        input=""
+        printf "%b" "$prompt_msg"
+        read -r input || input=""
     fi
+
+    # Strip leading/trailing whitespace and carriage returns
+    input="$(echo "$input" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | tr -d '\r')"
 
     eval "$var_name=\"\$input\""
 }
@@ -140,8 +150,12 @@ for cmd in curl tar; do
         printf "%bMissing required tool: %s. Attempting to install...%b\n" "$YELLOW" "$cmd" "$RESET"
         if command -v apt-get &>/dev/null; then
             run_as_root apt-get update -y && run_as_root apt-get install -y "$cmd"
+        elif command -v dnf &>/dev/null; then
+            run_as_root dnf install -y "$cmd"
         elif command -v yum &>/dev/null; then
             run_as_root yum install -y "$cmd"
+        elif command -v pacman &>/dev/null; then
+            run_as_root pacman -Sy --noconfirm "$cmd"
         else
             printf "%bError: Please install '%s' and rerun the installer.%b\n" "$RED" "$cmd" "$RESET" >&2
             exit 1
@@ -173,8 +187,10 @@ else
     VERSION="${VERSION:-latest}"
     if [ "$VERSION" = "latest" ]; then
         DOWNLOAD_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download/zeron-dc-bot-${TARGET}.tar.gz"
+        API_URL="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest"
     else
         DOWNLOAD_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}/zeron-dc-bot-${TARGET}.tar.gz"
+        API_URL="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/tags/${VERSION}"
     fi
     printf "Fetching: %b%s%b\n" "$CYAN" "$DOWNLOAD_URL" "$RESET"
 
@@ -182,15 +198,27 @@ else
     if curl -fSL --progress-bar "$DOWNLOAD_URL" -o "$TMP_DIR/zeron-dc-bot.tar.gz"; then
         DOWNLOAD_SUCCESS=true
     else
-        # Fallback: query GitHub Releases API to find asset
+        # Fallback 1: query GitHub Releases API for specified version/tag
         printf "%bDirect download link not ready yet, checking release assets via GitHub API...%b\n" "$YELLOW" "$RESET"
-        LATEST_JSON=$(curl -sSL "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/${VERSION}" 2>/dev/null || true)
+        LATEST_JSON=$(curl -sSL "$API_URL" 2>/dev/null || true)
         ASSET_URL=$(echo "$LATEST_JSON" | grep "browser_download_url" | grep "${TARGET}.tar.gz" | head -n 1 | cut -d '"' -f 4 || true)
-        
+
         if [ -n "$ASSET_URL" ]; then
             printf "Found asset: %s\n" "$ASSET_URL"
             if curl -fSL --progress-bar "$ASSET_URL" -o "$TMP_DIR/zeron-dc-bot.tar.gz"; then
                 DOWNLOAD_SUCCESS=true
+            fi
+        fi
+
+        # Fallback 2: search full releases list if tag pointer is not yet assigned
+        if [ "$DOWNLOAD_SUCCESS" = false ]; then
+            RELEASES_LIST=$(curl -sSL "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases" 2>/dev/null || true)
+            ASSET_URL=$(echo "$RELEASES_LIST" | grep "browser_download_url" | grep "${TARGET}.tar.gz" | head -n 1 | cut -d '"' -f 4 || true)
+            if [ -n "$ASSET_URL" ]; then
+                printf "Found asset from releases list: %s\n" "$ASSET_URL"
+                if curl -fSL --progress-bar "$ASSET_URL" -o "$TMP_DIR/zeron-dc-bot.tar.gz"; then
+                    DOWNLOAD_SUCCESS=true
+                fi
             fi
         fi
     fi
@@ -237,7 +265,7 @@ fi
 
 if [ "$RECONFIGURE" = true ]; then
     printf "\n%b--- Mandatory Discord Credentials ---%b\n" "$BOLD" "$RESET"
-    
+
     # DISCORD_TOKEN
     DISCORD_TOKEN=""
     while [ -z "$DISCORD_TOKEN" ]; do
@@ -253,17 +281,37 @@ if [ "$RECONFIGURE" = true ]; then
         prompt_read "2. Discord Application ID (from Developer Portal -> General Information): " APPLICATION_ID ""
         if [ -z "$APPLICATION_ID" ]; then
             printf "%bDiscord Application ID is required.%b\n" "$RED" "$RESET"
+        elif [[ ! "$APPLICATION_ID" =~ ^[0-9]+$ ]]; then
+            printf "%bDiscord Application ID must be a numeric snowflake (e.g. 123456789012345678).%b\n" "$RED" "$RESET"
+            APPLICATION_ID=""
         fi
     done
 
     # GUILD_ID (Optional)
-    prompt_read "3. Guild ID for fast testing (Optional, press Enter to register commands globally): " GUILD_ID ""
+    while true; do
+        prompt_read "3. Guild ID for fast testing (Optional, press Enter to register commands globally): " GUILD_ID ""
+        if [ -z "$GUILD_ID" ] || [[ "$GUILD_ID" =~ ^[0-9]+$ ]]; then
+            break
+        else
+            printf "%bGuild ID must be a numeric snowflake if provided.%b\n" "$RED" "$RESET"
+        fi
+    done
 
     printf "\n%b--- Zeron Engine Configuration ---%b\n" "$BOLD" "$RESET"
     prompt_read "4. Path to Zeron binary [zeron]: " ZERON_PATH "zeron"
+    if ! command -v "$ZERON_PATH" &>/dev/null && [ ! -f "$ZERON_PATH" ]; then
+        printf "%bNotice: '%s' not found yet in PATH or filesystem. Ensure Zeron is installed before launching.%b\n" "$YELLOW" "$ZERON_PATH" "$RESET"
+    fi
+
     prompt_read "5. Default Harness (e.g., codex, claude-code, devin, antigravity) [codex]: " DEFAULT_HARNESS "codex"
     prompt_read "6. Default Model (e.g., gpt-6.1-sol, claude-sonnet-5, or press Enter for default): " DEFAULT_MODEL ""
-    prompt_read "7. Command Prefix [!z]: " COMMAND_PREFIX "!z"
+    DEFAULT_PROJECT_DIR_FALLBACK="${TARGET_HOME}/projects"
+    prompt_read "7. Default Project / Workspace Directory [${DEFAULT_PROJECT_DIR_FALLBACK}]: " DEFAULT_PROJECT_DIR "${DEFAULT_PROJECT_DIR_FALLBACK}"
+    prompt_read "8. Command Prefix [!z]: " COMMAND_PREFIX "!z"
+
+    # Ensure default project directory exists
+    mkdir -p "$DEFAULT_PROJECT_DIR" 2>/dev/null || true
+    chown "$TARGET_USER:$TARGET_USER" "$DEFAULT_PROJECT_DIR" 2>/dev/null || true
 
     printf "\n%b--- Cloudflare Clef (Intelligent Chatter Filter) ---%b\n" "$BOLD" "$RESET"
     printf "Cloudflare Clef uses Workers AI (@cf/cloudflare/clef-flash) to evaluate if multi-user\n"
@@ -324,6 +372,7 @@ EOF
 # Zeron Engine Configuration
 ZERON_PATH=${ZERON_PATH}
 DEFAULT_HARNESS=${DEFAULT_HARNESS}
+DEFAULT_PROJECT_DIR=${DEFAULT_PROJECT_DIR}
 EOF
 
     if [ -n "$DEFAULT_MODEL" ]; then
@@ -386,7 +435,7 @@ if [ "$OS" = "Linux" ] && command -v systemctl &>/dev/null; then
 
     if [[ "$SETUP_SYSTEMD" =~ ^[Yy]$ ]]; then
         SERVICE_FILE="/etc/systemd/system/zeron-dc-bot.service"
-        
+
         cat << EOF | run_as_root tee "$SERVICE_FILE" > /dev/null
 [Unit]
 Description=Zeron Discord Bridge Bot
@@ -396,7 +445,8 @@ After=network.target
 Type=simple
 User=${TARGET_USER}
 WorkingDirectory=${INSTALL_DIR}
-EnvironmentFile=${INSTALL_DIR}/.env
+EnvironmentFile=-${INSTALL_DIR}/.env
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${TARGET_HOME}/.cargo/bin:${TARGET_HOME}/.local/bin"
 ExecStart=${BIN_DIR}/zeron-dc-bot
 Restart=always
 RestartSec=5
