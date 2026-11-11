@@ -85,4 +85,3 @@ mod tests {
         assert_eq!(val["description"], "Launch the Magpie Web UI Activity");
     }
 }
-

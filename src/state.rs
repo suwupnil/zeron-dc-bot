@@ -258,6 +258,7 @@ impl AppState {
 
     /// Spawn a project session assigned to a specific directory (via `/spawn`)
     /// with optional harness, model, and effort overrides (defaulting to last chosen or defaults)
+    #[allow(clippy::too_many_arguments)]
     pub async fn spawn_project_session_with_config(
         &self,
         channel_id: u64,
@@ -286,13 +287,19 @@ impl AppState {
         // Determine model: override -> last preferred for that harness -> default for that harness
         let selected_model = match model_opt {
             Some(m) if !m.trim().is_empty() => Some(m.trim().to_string()),
-            _ => self.get_preferred_model_for_harness(&selected_harness).await,
+            _ => {
+                self.get_preferred_model_for_harness(&selected_harness)
+                    .await
+            }
         };
 
         // Determine effort: override -> last preferred effort for that harness
         let selected_effort = match effort_opt {
             Some(e) if !e.trim().is_empty() => Some(e.trim().to_string()),
-            _ => self.get_preferred_effort_for_harness(&selected_harness).await,
+            _ => {
+                self.get_preferred_effort_for_harness(&selected_harness)
+                    .await
+            }
         };
 
         // Record choices in persistent preferences
@@ -306,7 +313,12 @@ impl AppState {
 
         info!(
             "Spawning new project Zeron session for #{} ({}) in directory {} [{}/{:?}.{:?}]",
-            channel_name, channel_id, project_dir, selected_harness, selected_model, selected_effort
+            channel_name,
+            channel_id,
+            project_dir,
+            selected_harness,
+            selected_model,
+            selected_effort
         );
 
         let title = format!("#{} (Project)", channel_name);
@@ -691,11 +703,20 @@ impl AppState {
         model_name: &str,
         effort: Option<&str>,
     ) -> BotResult<SessionData> {
-        let (old_chat_id, kind, parent_chat_id, _parent_channel_id, _guild_id, title, project_dir, origin) = {
+        let (
+            old_chat_id,
+            kind,
+            parent_chat_id,
+            _parent_channel_id,
+            _guild_id,
+            title,
+            project_dir,
+            origin,
+        ) = {
             let map = self.sessions.read().await;
-            let session = map
-                .get(&channel_id)
-                .ok_or_else(|| BotError::Session("No active session found for this channel".into()))?;
+            let session = map.get(&channel_id).ok_or_else(|| {
+                BotError::Session("No active session found for this channel".into())
+            })?;
 
             (
                 session.chat_id.clone(),
@@ -705,7 +726,7 @@ impl AppState {
                 session.guild_id,
                 session.title.clone(),
                 session.project_dir.clone(),
-                session.origin.clone(),
+                session.origin,
             )
         };
 
@@ -760,7 +781,11 @@ Tool calls or actions from earlier ran on the previous provider; continue natura
                     .create_side_chat(
                         parent_id,
                         Some(&title),
-                        if project_dir.is_empty() { None } else { Some(&project_dir) },
+                        if project_dir.is_empty() {
+                            None
+                        } else {
+                            Some(&project_dir)
+                        },
                         Some(model_name),
                         Some(harness_name),
                     )
@@ -838,12 +863,15 @@ Tool calls or actions from earlier ran on the previous provider; continue natura
     pub async fn set_effort(&self, channel_id: u64, effort: &str) -> BotResult<SessionData> {
         let (harness_name, model_name) = {
             let map = self.sessions.read().await;
-            let session = map
-                .get(&channel_id)
-                .ok_or_else(|| BotError::Session("No active session found for this channel".into()))?;
+            let session = map.get(&channel_id).ok_or_else(|| {
+                BotError::Session("No active session found for this channel".into())
+            })?;
             (
                 session.harness.clone(),
-                session.model.clone().unwrap_or_else(|| "default".to_string()),
+                session
+                    .model
+                    .clone()
+                    .unwrap_or_else(|| "default".to_string()),
             )
         };
 
@@ -866,19 +894,14 @@ Tool calls or actions from earlier ran on the previous provider; continue natura
     pub async fn set_model(&self, channel_id: u64, model_name: &str) -> BotResult<SessionData> {
         let (harness_name, effort) = {
             let map = self.sessions.read().await;
-            let session = map
-                .get(&channel_id)
-                .ok_or_else(|| BotError::Session("No active session found for this channel".into()))?;
+            let session = map.get(&channel_id).ok_or_else(|| {
+                BotError::Session("No active session found for this channel".into())
+            })?;
             (session.harness.clone(), session.effort.clone())
         };
 
-        self.set_harness_model_and_effort(
-            channel_id,
-            &harness_name,
-            model_name,
-            effort.as_deref(),
-        )
-        .await
+        self.set_harness_model_and_effort(channel_id, &harness_name, model_name, effort.as_deref())
+            .await
     }
 
     /// Retrieve and clear any pending handoff context for the given channel.

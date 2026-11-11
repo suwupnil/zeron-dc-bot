@@ -129,7 +129,10 @@ async fn test_live_zeron_mcp_handshake_and_tools() {
         .set_harness_model_and_effort(999888, &available_harness, &valid_model, None)
         .await
         .expect("set_harness_model_and_effort failed");
-    assert_ne!(switched.chat_id, initial_chat_id, "chat_id should change when model/harness is updated");
+    assert_ne!(
+        switched.chat_id, initial_chat_id,
+        "chat_id should change when model/harness is updated"
+    );
     assert_eq!(switched.harness, available_harness);
     assert_eq!(switched.model, Some(valid_model));
 

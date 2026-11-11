@@ -29,3 +29,5 @@ Thumbs.db
 *.sublime-workspace
 
 firebase-debug.log
+cloudflare/worker/.wrangler/
+cloudflare/worker/wrangler.jsonc

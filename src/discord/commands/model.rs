@@ -28,9 +28,13 @@ pub fn register() -> CreateCommand {
             .set_autocomplete(true),
         )
         .add_option(
-            CreateCommandOption::new(CommandOptionType::String, "effort", "Thinking level (optional)")
-                .required(false)
-                .set_autocomplete(true),
+            CreateCommandOption::new(
+                CommandOptionType::String,
+                "effort",
+                "Thinking level (optional)",
+            )
+            .required(false)
+            .set_autocomplete(true),
         )
 }
 
@@ -389,7 +393,10 @@ mod tests {
         assert_eq!(options.len(), 3);
 
         for opt in options {
-            let required = opt.get("required").and_then(|r| r.as_bool()).unwrap_or(false);
+            let required = opt
+                .get("required")
+                .and_then(|r| r.as_bool())
+                .unwrap_or(false);
             assert!(
                 !required,
                 "Option '{}' should be optional (required=false)",

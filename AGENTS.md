@@ -68,6 +68,7 @@ Comprehensive technical architecture, operating model, and guidelines for AI age
 | [`src/discord/formatter.rs`](/zeron-dc-bot/src/discord/formatter.rs) | 2000-character boundary splitter preserving markdown code fences (` ``` `). |
 | [`src/discord/topic.rs`](/zeron-dc-bot/src/discord/topic.rs) | Channel topic synchronization (`<harness>/<model>.<effort>`) and recursive skill/MCP scanner. |
 | [`src/discord/commands/`](/zeron-dc-bot/src/discord/commands/) | Slash command implementations: `spawn`, `close`, `resume`, `model`, `effort`, `skills`, `mcp`, `magpie`, `status`, `interrupt`, `help`. |
+| [`scripts/`](/zeron-dc-bot/scripts) | Automated installation scripts for Linux/macOS VMs (`scripts/install.sh` for 1-step curl installs and interactive `.env` configuration). |
 | [`cloudflare/`](/zeron-dc-bot/cloudflare) | Cloudflare Worker reverse-proxy and VM automation scripts for Discord Embedded Activities (auto-auth, self-healing origin sync, Ed25519 verification). |
 
 ---
@@ -150,12 +151,21 @@ cargo build --release
 ```
 
 ### 5.2 VM Deployment
-The production bot runs on the VM:
+The production bot runs on Linux VMs (Debian, Ubuntu, etc.):
+
+#### 1-Step Automated VM Installation
+On the target VM, run:
+```bash
+curl -fsSL https://raw.githubusercontent.com/suwupnil/zeron-dc-bot/main/scripts/install.sh | bash
+```
+This automatically downloads prebuilt GitHub Actions binaries, provides an interactive terminal wizard to configure `.env` (Discord credentials, Zeron engine defaults, optional Cloudflare Clef flash filter), and installs the systemd unit.
+
+#### Manual Build & Service Management
 ```bash
 # Connect to host
 ssh -i /path/to/ssh-key user@host
 
-# Build release on VM
+# Build release on VM (if building manually)
 export PATH="/your/path/.cargo/bin:$PATH"
 cd /your/path/zeron-dc-bot
 cargo build --release

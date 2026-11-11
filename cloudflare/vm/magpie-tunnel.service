@@ -1,15 +1,13 @@
 [Unit]
-Description=Cloudflare Quick Tunnel for Magpie Web UI
+Description=Cloudflare Tunnel & Worker Sync for Magpie Web UI
 After=network.target
 
 [Service]
 Type=simple
 User=<YOUR_USER>
-ExecStart=/usr/bin/cloudflared tunnel --url http://127.0.0.1:4000
+ExecStart=/home/<YOUR_USER>/sync-tunnel-to-worker.sh
 Restart=always
 RestartSec=5
-StandardOutput=append:/var/log/magpie-tunnel.log
-StandardError=append:/var/log/magpie-tunnel.log
 
 [Install]
 WantedBy=multi-user.target

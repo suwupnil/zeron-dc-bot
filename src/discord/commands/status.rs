@@ -6,8 +6,7 @@ use serenity::all::{
 };
 
 pub fn register() -> CreateCommand {
-    CreateCommand::new("status")
-        .description("View current Zeron session state, model, directory, and monitoring status")
+    CreateCommand::new("status").description("Get info")
 }
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) -> BotResult<()> {
@@ -34,9 +33,9 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
             };
 
             let monitor_status = if s.is_closed {
-                "🔴 Closed / Unmonitored (use `/resume` to re-enable)"
+                "🔴Unmonitored (use `/resume` or `/spawn` to enable)"
             } else {
-                "🟢 Active / Monitored"
+                "🟢 Active"
             };
 
             let decision_model_desc = if state.decision.is_configured() {

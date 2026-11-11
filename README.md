@@ -67,18 +67,42 @@ All activities execute strictly on the target host/VM running the Zeron Engine. 
 
 | Command | Description | Autocomplete / Features |
 |---|---|---|
-| `/dir <path>` | Set the host VM project directory for this channel / thread | Real-time path autocomplete & local VM directory validation. |
-| `/model <name>` | Change the AI model for this channel / thread | Dynamic autocomplete querying available models from Zeron `list_models`. |
-| `/mcp <server>` | Attach/select an MCP server for this conversation | Autocompletes available MCP servers, tools, and local plugins. |
-| `/skills <skill>` | Activate a specialized workflow / skill | Autocompletes local skills (Cloudflare, React, HyperFrames, etc.). |
-| `/status` | View current chat session, active model, directory, and thread hierarchy | Displays live status (`idle`, `working`, `awaitingInput`) from Zeron engine. |
-| `/reset` | Archive the current Zeron session and start a fresh session | Cleanly tidies up previous chat state. |
-| `/interrupt` | Stop a currently running agent turn immediately | Calls Zeron `interrupt_chat`. |
-| `/help` | Display interactive guide and command overview | Formatted markdown manual. |
+| `/spawn <directory> [harness] [model] [effort]` | Initialize a project-bound Zeron session bound to a directory | Path validation, autocompletes harnesses, models, and reasoning effort levels. |
+| `/model [harness] [model] [effort]` | Switch AI harness, model, or reasoning effort | Live autocomplete from Zeron daemon; preserves prior conversation memory. |
+| `/effort <level>` | Adjust reasoning effort for active harness/model | Autocompletes supported levels (`low`, `medium`, `high`, etc.). |
+| `/close` | Unlink monitoring from the channel and archive session | Cleanly tidies up previous chat state. |
+| `/resume [session_id]` | Re-activate a closed session or switch to an archived session | Validates no conflicting channel bindings. |
+| `/skills` | List detected skills across local installations | Ephemeral output of detected skills. |
+| `/mcp` | List configured MCP servers and tool registries | Ephemeral output of active and configured MCP servers. |
+| `/magpie` | Launch the Magpie Web UI Activity iframe | Discord native Activity integration (Type 12 `LAUNCH_ACTIVITY`). |
+| `/status` | View current chat session, active model, and directory | Displays live session info and decision model state. |
+| `/interrupt` | Stop a currently running agent turn immediately | Calls Zeron MCP `interrupt_chat`. |
+| `/help` | Display interactive guide and command manual | Ephemeral formatted markdown manual. |
 
 ---
 
-## 🚀 Getting Started
+## ⚡ Quick VM Installation (Recommended)
+
+To install `zeron-dc-bot` on a Linux VM (Ubuntu, Debian, etc.) or macOS without compiling Rust from source:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/suwupnil/zeron-dc-bot/main/scripts/install.sh | bash
+```
+
+### What the installer does:
+1. **GitHub Actions Prebuilt Binary:** Automatically detects your architecture (`x86_64` or `aarch64` / `arm64`) and downloads the precompiled binary built by GitHub Actions into `/usr/local/bin/zeron-dc-bot`. No Rust toolchain or build dependencies required on the VM.
+2. **Terminal Configuration Wizard:** Guides you step-by-step through setting up `.env`:
+   - **Mandatory Discord Keys:** Discord Bot Token (`DISCORD_TOKEN`) and Application ID (`APPLICATION_ID`).
+   - **Zeron Settings:** Binary path (`ZERON_PATH`), default agent harness (`DEFAULT_HARNESS`), and optional default model.
+   - **Cloudflare Clef Filter:** Prompts if you would like to enable Cloudflare Clef (`@cf/cloudflare/clef-flash`) for multi-user channels. If yes, it collects your Account ID and API token. If no, the bot automatically uses the built-in conversational heuristic fallback.
+   - **Magpie Activity:** Optional URL for Discord Embedded Activity.
+3. **Automated systemd Service (Linux):** Configures and starts `/etc/systemd/system/zeron-dc-bot.service` automatically so your bot runs persistently across reboots.
+
+---
+
+## 🛠️ Manual & Developer Setup
+
+If you prefer building from source or contributing to the codebase:
 
 ### Prerequisites
 

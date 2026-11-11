@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - "v*"
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -62,40 +64,45 @@ jobs:
         shell: bash
         run: |
           BIN_NAME="zeron-dc-bot"
-          ARCHIVE_NAME="zeron-dc-bot-${{ github.ref_name || 'manual' }}-${{ matrix.target }}.tar.gz"
+          REF_NAME="${{ github.ref_name || 'latest' }}"
+          ARCHIVE_VERSIONED="zeron-dc-bot-${REF_NAME}-${{ matrix.target }}.tar.gz"
+          ARCHIVE_GENERIC="zeron-dc-bot-${{ matrix.target }}.tar.gz"
           cd "target/${{ matrix.target }}/release"
           chmod +x "${BIN_NAME}"
-          tar -czvf "${ARCHIVE_NAME}" "${BIN_NAME}"
-          shasum -a 256 "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256"
-          echo "ARCHIVE_PATH=target/${{ matrix.target }}/release/${ARCHIVE_NAME}" >> $GITHUB_ENV
-          echo "CHECKSUM_PATH=target/${{ matrix.target }}/release/${ARCHIVE_NAME}.sha256" >> $GITHUB_ENV
+          tar -czvf "${ARCHIVE_VERSIONED}" "${BIN_NAME}"
+          cp "${ARCHIVE_VERSIONED}" "${ARCHIVE_GENERIC}"
+          shasum -a 256 "${ARCHIVE_VERSIONED}" > "${ARCHIVE_VERSIONED}.sha256"
+          shasum -a 256 "${ARCHIVE_GENERIC}" > "${ARCHIVE_GENERIC}.sha256"
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          cp "${ARCHIVE_VERSIONED}" "${ARCHIVE_VERSIONED}.sha256" "${ARCHIVE_GENERIC}" "${ARCHIVE_GENERIC}.sha256" "$GITHUB_WORKSPACE/dist/"
 
       - name: Package artifacts (Windows)
         if: matrix.os == 'windows-latest'
         shell: bash
         run: |
           BIN_NAME="zeron-dc-bot.exe"
-          ARCHIVE_NAME="zeron-dc-bot-${{ github.ref_name || 'manual' }}-${{ matrix.target }}.zip"
+          REF_NAME="${{ github.ref_name || 'latest' }}"
+          ARCHIVE_VERSIONED="zeron-dc-bot-${REF_NAME}-${{ matrix.target }}.zip"
+          ARCHIVE_GENERIC="zeron-dc-bot-${{ matrix.target }}.zip"
           cd "target/${{ matrix.target }}/release"
-          7z a "${ARCHIVE_NAME}" "${BIN_NAME}"
-          shasum -a 256 "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256" || certutil -hashfile "${ARCHIVE_NAME}" SHA256 > "${ARCHIVE_NAME}.sha256"
-          echo "ARCHIVE_PATH=target/${{ matrix.target }}/release/${ARCHIVE_NAME}" >> $GITHUB_ENV
-          echo "CHECKSUM_PATH=target/${{ matrix.target }}/release/${ARCHIVE_NAME}.sha256" >> $GITHUB_ENV
+          7z a "${ARCHIVE_VERSIONED}" "${BIN_NAME}"
+          cp "${ARCHIVE_VERSIONED}" "${ARCHIVE_GENERIC}"
+          shasum -a 256 "${ARCHIVE_VERSIONED}" > "${ARCHIVE_VERSIONED}.sha256" || certutil -hashfile "${ARCHIVE_VERSIONED}" SHA256 > "${ARCHIVE_VERSIONED}.sha256"
+          shasum -a 256 "${ARCHIVE_GENERIC}" > "${ARCHIVE_GENERIC}.sha256" || certutil -hashfile "${ARCHIVE_GENERIC}" SHA256 > "${ARCHIVE_GENERIC}.sha256"
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          cp "${ARCHIVE_VERSIONED}" "${ARCHIVE_VERSIONED}.sha256" "${ARCHIVE_GENERIC}" "${ARCHIVE_GENERIC}.sha256" "$GITHUB_WORKSPACE/dist/"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: binary-${{ matrix.target }}
-          path: |
-            ${{ env.ARCHIVE_PATH }}
-            ${{ env.CHECKSUM_PATH }}
+          path: dist/*
           if-no-files-found: error
 
   publish:
     name: Publish Release
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -111,12 +118,29 @@ jobs:
         run: |
           ls -la release-assets/
 
-      - name: Create GitHub Release
+      - name: Compute Release Metadata
+        id: meta
+        shell: bash
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "name=Release ${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          else
+            echo "tag=latest" >> $GITHUB_OUTPUT
+            echo "name=Latest Prebuilt Release" >> $GITHUB_OUTPUT
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
           files: release-assets/*
           generate_release_notes: true
           draft: false
-          prerelease: false
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

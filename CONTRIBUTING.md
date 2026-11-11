@@ -80,6 +80,8 @@ Before making changes, please familiarize yourself with the system architecture 
 ```
 .
 ├── .github/                  # GitHub workflows, issue templates, PR template
+├── cloudflare/               # Cloudflare Worker & Activity proxy integration
+├── scripts/                  # Automated VM installer (scripts/install.sh)
 ├── src/
 │   ├── config.rs             # Configuration parser and environment reader
 │   ├── decision.rs           # Multi-user conversation triage and decision model
