@@ -4,9 +4,21 @@
 #
 # Runs cloudflared quick tunnel to local Magpie (port 4000), streams its output
 # in real time, and immediately POSTs the assigned trycloudflare.com URL and
-# the active Magpie authentication cookie to the Cloudflare Worker.
+# the active Magpie authentication cookie to the Cloudflare Worker with retries.
 # ==============================================================================
 set -eo pipefail
+
+# Source configuration from user environment if present
+if [ -f "${HOME}/.magpie-tunnel.env" ]; then
+    # shellcheck disable=SC1091
+    source "${HOME}/.magpie-tunnel.env"
+elif [ -f "${HOME}/.terminal-bridge.env" ]; then
+    # shellcheck disable=SC1091
+    source "${HOME}/.terminal-bridge.env"
+elif [ -f "/etc/magpie-tunnel.env" ]; then
+    # shellcheck disable=SC1091
+    source "/etc/magpie-tunnel.env"
+fi
 
 WORKER_ENDPOINT="${WORKER_ENDPOINT:-https://<YOUR_WORKER_SUBDOMAIN>.workers.dev/__update_origin}"
 UPDATE_SECRET="${UPDATE_SECRET:-<YOUR_UPDATE_SECRET>}"
@@ -19,8 +31,26 @@ if [[ "$WORKER_ENDPOINT" == *"YOUR_WORKER_SUBDOMAIN"* ]] || [[ "$UPDATE_SECRET" 
     exit 1
 fi
 
-# Detect active MAGPIE_WEB_KEY from environment or systemd user service
+# Locate cloudflared binary across standard installation paths
+CLOUDFLARED_BIN="$(command -v cloudflared 2>/dev/null || true)"
+if [ -z "$CLOUDFLARED_BIN" ] || [ ! -x "$CLOUDFLARED_BIN" ]; then
+    if [ -x "/usr/local/bin/cloudflared" ]; then
+        CLOUDFLARED_BIN="/usr/local/bin/cloudflared"
+    elif [ -x "/usr/bin/cloudflared" ]; then
+        CLOUDFLARED_BIN="/usr/bin/cloudflared"
+    else
+        echo "Error: cloudflared binary not found in PATH, /usr/local/bin, or /usr/bin."
+        exit 1
+    fi
+fi
+
+# Detect active MAGPIE session cookie from environment or systemd user service
 get_magpie_cookie() {
+    if [ -n "$MAGPIE_COOKIE" ]; then
+        echo "$MAGPIE_COOKIE"
+        return
+    fi
+
     local key="$MAGPIE_WEB_KEY"
     if [ -z "$key" ] && [ -f "${HOME}/.config/systemd/user/magpie.service" ]; then
         key=$(sed -n 's/.*MAGPIE_WEB_KEY=\([^" ]*\).*/\1/p' "${HOME}/.config/systemd/user/magpie.service" 2>/dev/null || true)
@@ -30,10 +60,40 @@ get_magpie_cookie() {
     fi
 }
 
-echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] Starting cloudflared tunnel to http://127.0.0.1:${LOCAL_PORT}..."
+# Robust worker synchronization with exponential backoff retries
+sync_to_worker() {
+    local payload="$1"
+    local max_retries=5
+    local delay=2
+    local attempt=1
+
+    while [ "$attempt" -le "$max_retries" ]; do
+        echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] Posting Magpie origin to worker (attempt ${attempt}/${max_retries})..."
+        local response
+        if response=$(curl -fsS -m 10 -X POST "${WORKER_ENDPOINT}" \
+            -H "Authorization: Bearer ${UPDATE_SECRET}" \
+            -H "Content-Type: application/json" \
+            -d "${payload}" 2>&1); then
+            echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] Worker sync successful: ${response}"
+            return 0
+        else
+            echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] Sync attempt ${attempt} failed: ${response}"
+            if [ "$attempt" -lt "$max_retries" ]; then
+                sleep "$delay"
+                delay=$((delay * 2))
+            fi
+            attempt=$((attempt + 1))
+        fi
+    done
+
+    echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] WARNING: Failed to sync Magpie origin after ${max_retries} attempts."
+    return 1
+}
+
+echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] Starting cloudflared tunnel to http://127.0.0.1:${LOCAL_PORT} using ${CLOUDFLARED_BIN}..."
 
 # Execute cloudflared and stream output line-by-line in real time
-/usr/bin/cloudflared tunnel --url "http://127.0.0.1:${LOCAL_PORT}" 2>&1 | while IFS= read -r line; do
+"${CLOUDFLARED_BIN}" tunnel --url "http://127.0.0.1:${LOCAL_PORT}" 2>&1 | while IFS= read -r line; do
     echo "$line"
     if [[ "$line" =~ (https://[a-zA-Z0-9.-]+\.trycloudflare\.com) ]]; then
         TUNNEL_URL="${BASH_REMATCH[1]}"
@@ -46,10 +106,6 @@ echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] Starting cloudflared tunnel to http://1
             PAYLOAD="{\"origin\":\"${TUNNEL_URL}\"}"
         fi
 
-        RESPONSE=$(curl -fsS -X POST "${WORKER_ENDPOINT}" \
-            -H "Authorization: Bearer ${UPDATE_SECRET}" \
-            -H "Content-Type: application/json" \
-            -d "${PAYLOAD}" 2>&1 || echo "Sync failed: $?")
-        echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] Worker sync response: ${RESPONSE}"
+        sync_to_worker "${PAYLOAD}" || true
     fi
 done

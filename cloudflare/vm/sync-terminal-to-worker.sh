@@ -4,13 +4,17 @@
 #
 # Runs cloudflared quick tunnel to local Terminal Bridge (port 7681), streams its
 # output in real time, and immediately POSTs the assigned trycloudflare.com URL
-# to the Cloudflare Worker at /__update_terminal_origin.
+# to the Cloudflare Worker at /__update_terminal_origin with retry resilience.
 # ==============================================================================
 set -eo pipefail
 
+# Source configuration from user environment if present
 if [ -f "${HOME}/.terminal-bridge.env" ]; then
     # shellcheck disable=SC1091
     source "${HOME}/.terminal-bridge.env"
+elif [ -f "/etc/terminal-bridge.env" ]; then
+    # shellcheck disable=SC1091
+    source "/etc/terminal-bridge.env"
 fi
 
 WORKER_ENDPOINT="${TERMINAL_WORKER_ENDPOINT:-https://<YOUR_WORKER_SUBDOMAIN>.workers.dev/__update_terminal_origin}"
@@ -24,7 +28,48 @@ if [[ "$WORKER_ENDPOINT" == *"YOUR_WORKER_SUBDOMAIN"* ]] || [[ "$UPDATE_SECRET" 
     exit 1
 fi
 
-CLOUDFLARED_BIN="$(command -v cloudflared 2>/dev/null || echo '/usr/bin/cloudflared')"
+# Locate cloudflared binary across standard installation paths
+CLOUDFLARED_BIN="$(command -v cloudflared 2>/dev/null || true)"
+if [ -z "$CLOUDFLARED_BIN" ] || [ ! -x "$CLOUDFLARED_BIN" ]; then
+    if [ -x "/usr/local/bin/cloudflared" ]; then
+        CLOUDFLARED_BIN="/usr/local/bin/cloudflared"
+    elif [ -x "/usr/bin/cloudflared" ]; then
+        CLOUDFLARED_BIN="/usr/bin/cloudflared"
+    else
+        echo "Error: cloudflared binary not found in PATH, /usr/local/bin, or /usr/bin."
+        exit 1
+    fi
+fi
+
+# Robust worker synchronization with exponential backoff retries
+sync_to_worker() {
+    local payload="$1"
+    local max_retries=5
+    local delay=2
+    local attempt=1
+
+    while [ "$attempt" -le "$max_retries" ]; do
+        echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] Posting terminal origin to worker (attempt ${attempt}/${max_retries})..."
+        local response
+        if response=$(curl -fsS -m 10 -X POST "${WORKER_ENDPOINT}" \
+            -H "Authorization: Bearer ${UPDATE_SECRET}" \
+            -H "Content-Type: application/json" \
+            -d "${payload}" 2>&1); then
+            echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] Worker sync successful: ${response}"
+            return 0
+        else
+            echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] Sync attempt ${attempt} failed: ${response}"
+            if [ "$attempt" -lt "$max_retries" ]; then
+                sleep "$delay"
+                delay=$((delay * 2))
+            fi
+            attempt=$((attempt + 1))
+        fi
+    done
+
+    echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] WARNING: Failed to sync terminal origin after ${max_retries} attempts."
+    return 1
+}
 
 echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] Starting cloudflared tunnel to http://127.0.0.1:${LOCAL_PORT} using ${CLOUDFLARED_BIN}..."
 
@@ -36,11 +81,6 @@ echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] Starting cloudflared tunnel to http://1
         echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] Detected terminal tunnel URL: ${TUNNEL_URL}"
 
         PAYLOAD="{\"origin\":\"${TUNNEL_URL}\"}"
-
-        RESPONSE=$(curl -fsS -X POST "${WORKER_ENDPOINT}" \
-            -H "Authorization: Bearer ${UPDATE_SECRET}" \
-            -H "Content-Type: application/json" \
-            -d "${PAYLOAD}" 2>&1 || echo "Sync failed: $?")
-        echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] Worker sync response: ${RESPONSE}"
+        sync_to_worker "${PAYLOAD}" || true
     fi
 done

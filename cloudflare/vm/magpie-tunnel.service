@@ -5,9 +5,15 @@ After=network.target
 [Service]
 Type=simple
 User=<YOUR_USER>
+WorkingDirectory=/home/<YOUR_USER>
 ExecStart=/home/<YOUR_USER>/sync-tunnel-to-worker.sh
 Restart=always
 RestartSec=5
+EnvironmentFile=-/home/<YOUR_USER>/.magpie-tunnel.env
+EnvironmentFile=-/home/<YOUR_USER>/.terminal-bridge.env
+LimitNOFILE=65535
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

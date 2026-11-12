@@ -6,7 +6,7 @@
  * Security:
  * - Direct internet access is unconditionally blocked (HTTP 403).
  * - Master session cookie (MAGPIE_COOKIE) is only injected into Discord proxy traffic for Magpie.
- * - Terminal requests (/terminal/*) route to the terminal bridge with Authorization: Bearer <TERMINAL_SECRET>.
+ * - Terminal requests (/terminal/*, /ws) route to the terminal bridge with Authorization: Bearer <TERMINAL_SECRET>.
  * - Optional cryptographic Ed25519 verification when DISCORD_PUBLIC_KEY is configured.
  * - Strips iframe-blocking headers (X-Frame-Options, Content-Security-Policy).
  */
@@ -76,6 +76,7 @@ function isDiscordRequest(request) {
   const via = request.headers.get("Via") || "";
   const referer = request.headers.get("Referer") || "";
   const origin = request.headers.get("Origin") || "";
+  const userAgent = request.headers.get("User-Agent") || "";
 
   return (
     cfWorker.includes("discordsays.com") ||
@@ -86,9 +87,24 @@ function isDiscordRequest(request) {
     origin.includes("discordsays.com") ||
     origin.includes("discord.com") ||
     via.toLowerCase().includes("discord") ||
+    userAgent.toLowerCase().includes("discord") ||
     request.headers.has("X-Discord-Proxy-Payload") ||
     request.headers.has("X-Signature-Ed25519")
   );
+}
+
+// RFC 6455 compliant WebSocket close helper that ignores invalid/reserved status codes (e.g. 1005, 1006)
+function safeCloseWs(ws, code, reason) {
+  try {
+    if (!ws) return;
+    if (code && code >= 1000 && code < 5000 && code !== 1004 && code !== 1005 && code !== 1006 && code !== 1015) {
+      ws.close(code, reason || "");
+    } else {
+      ws.close(1000, "Normal closure");
+    }
+  } catch (_) {
+    try { ws.close(); } catch (_) {}
+  }
 }
 
 export default {
@@ -107,6 +123,7 @@ export default {
         worker: "magpie-activity",
         active_backend_origin: activeOrigin,
         active_cookie_synced: hasActiveCookie,
+        terminal_backend_origin: terminalOrigin || null,
         terminal_backend_configured: Boolean(terminalOrigin),
         ed25519_verification_enforced: Boolean(env.DISCORD_PUBLIC_KEY),
         timestamp: new Date().toISOString(),
@@ -240,8 +257,13 @@ export default {
 
     const channelId = url.searchParams.get("channel_id");
     const queryMode = url.searchParams.get("mode");
+    const isWebSocket = request.headers.get("Upgrade")?.toLowerCase() === "websocket";
 
-    let isTerminal = pathname.startsWith("/terminal");
+    // Terminal routing conditions:
+    // - Path starts with /terminal (e.g. /terminal, /terminal/ws, /terminal/xterm.js)
+    // - Path is /ws or /ws/ (Discord stripped prefix /terminal from URL mapping)
+    // - Any WebSocket upgrade request (only the terminal bridge speaks WebSockets)
+    let isTerminal = pathname.startsWith("/terminal") || pathname === "/ws" || pathname === "/ws/" || isWebSocket;
 
     if (!isTerminal && (pathname === "/" || pathname === "")) {
       if (queryMode === "terminal") {
@@ -286,16 +308,21 @@ export default {
       backendOrigin = targetOrigin;
     }
 
-    const targetUrl = new URL(pathname + url.search, backendOrigin);
-
     // Resolve active session authentication cookie (only for Magpie backend)
     const activeCookie = !injectTerminalAuth
       ? ((await env.MAGPIE_KV?.get("active_cookie")) || env.MAGPIE_COOKIE)
       : null;
 
     // 6. WebSocket proxying (streaming / terminal sessions)
-    if (request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
-      const wsUrl = new URL(pathname + url.search, backendOrigin);
+    if (isWebSocket) {
+      let wsPath = pathname;
+      if (wsPath === "/ws" || wsPath === "/ws/") {
+        wsPath = "/terminal/ws";
+      } else if (wsPath === "/" || wsPath === "") {
+        wsPath = "/terminal/ws";
+      }
+
+      const wsUrl = new URL(wsPath + url.search, backendOrigin);
       if (wsUrl.protocol === "wss:") wsUrl.protocol = "https:";
       if (wsUrl.protocol === "ws:") wsUrl.protocol = "http:";
 
@@ -352,27 +379,19 @@ export default {
         });
 
         server.addEventListener("close", (event) => {
-          try {
-            backendWs.close(event.code, event.reason);
-          } catch (_) {}
+          safeCloseWs(backendWs, event.code, event.reason);
         });
 
         backendWs.addEventListener("close", (event) => {
-          try {
-            server.close(event.code, event.reason);
-          } catch (_) {}
+          safeCloseWs(server, event.code, event.reason);
         });
 
         server.addEventListener("error", () => {
-          try {
-            backendWs.close(1011, "Client WS error");
-          } catch (_) {}
+          safeCloseWs(backendWs, 1011, "Client WS error");
         });
 
         backendWs.addEventListener("error", () => {
-          try {
-            server.close(1011, "Backend WS error");
-          } catch (_) {}
+          safeCloseWs(server, 1011, "Backend WS error");
         });
 
         return new Response(null, {
@@ -388,6 +407,12 @@ export default {
     }
 
     // 7. Forward HTTP request with injected authentication
+    let forwardPath = pathname;
+    if (isTerminal && (forwardPath === "/" || forwardPath === "")) {
+      forwardPath = "/terminal/";
+    }
+    const targetUrl = new URL(forwardPath + url.search, backendOrigin);
+
     const forwardHeaders = new Headers(request.headers);
     forwardHeaders.set("Host", targetUrl.host);
     if (activeCookie) forwardHeaders.set("Cookie", activeCookie);
@@ -406,14 +431,21 @@ export default {
       // 8. Rewrite response headers for Discord iframe compatibility
       const respHeaders = new Headers(resp.headers);
 
-      // Rewrite redirects back to Worker host
+      // Rewrite redirects back to Worker or preserve iframe host
       const location = respHeaders.get("Location");
       if (location) {
         try {
           const locUrl = new URL(location, backendOrigin);
-          locUrl.host = url.host;
-          locUrl.protocol = url.protocol;
-          respHeaders.set("Location", locUrl.toString());
+          const fwdHost = request.headers.get("X-Forwarded-Host");
+          if (fwdHost) {
+            locUrl.host = fwdHost;
+            locUrl.protocol = "https:";
+            respHeaders.set("Location", locUrl.toString());
+          } else {
+            locUrl.host = url.host;
+            locUrl.protocol = url.protocol;
+            respHeaders.set("Location", locUrl.toString());
+          }
         } catch (_) {}
       }
 

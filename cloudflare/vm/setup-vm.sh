@@ -16,56 +16,63 @@ if ! command -v cloudflared &>/dev/null; then
         aarch64|arm64) CF_ARCH="arm64" ;;
         *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
     esac
-    echo "Downloading cloudflared for $CF_ARCH..."
-    curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}.deb" -o /tmp/cloudflared.deb
-    sudo dpkg -i /tmp/cloudflared.deb
-    rm /tmp/cloudflared.deb
+
+    if command -v dpkg &>/dev/null; then
+        echo "Downloading cloudflared deb for ${CF_ARCH}..."
+        curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}.deb" -o /tmp/cloudflared.deb
+        if ! sudo dpkg -i /tmp/cloudflared.deb 2>/dev/null; then
+            echo "Resolving package dependencies..."
+            sudo apt-get update -qq && sudo apt-get install -f -y
+        fi
+        rm -f /tmp/cloudflared.deb
+    else
+        echo "Downloading standalone cloudflared binary for ${CF_ARCH}..."
+        sudo curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}" -o /usr/local/bin/cloudflared
+        sudo chmod +x /usr/local/bin/cloudflared
+    fi
 fi
-echo "cloudflared is ready: $(cloudflared --version)"
 
-echo "===> 2. Installing scripts..."
-cp "$SCRIPT_DIR/sync-tunnel-to-worker.sh" "$TARGET_HOME/sync-tunnel-to-worker.sh"
-chmod +x "$TARGET_HOME/sync-tunnel-to-worker.sh"
-chown "$TARGET_USER:$TARGET_USER" "$TARGET_HOME/sync-tunnel-to-worker.sh"
+CLOUDFLARED_VER=$(cloudflared --version 2>/dev/null || /usr/local/bin/cloudflared --version 2>/dev/null || echo "installed")
+echo "cloudflared is ready: ${CLOUDFLARED_VER}"
 
-cp "$SCRIPT_DIR/sync-terminal-to-worker.sh" "$TARGET_HOME/sync-terminal-to-worker.sh"
-chmod +x "$TARGET_HOME/sync-terminal-to-worker.sh"
-chown "$TARGET_USER:$TARGET_USER" "$TARGET_HOME/sync-terminal-to-worker.sh"
-
-cp "$SCRIPT_DIR/terminal-bridge.js" "$TARGET_HOME/terminal-bridge.js"
-chmod +x "$TARGET_HOME/terminal-bridge.js"
-chown "$TARGET_USER:$TARGET_USER" "$TARGET_HOME/terminal-bridge.js"
+echo "===> 2. Installing scripts & bridge daemon..."
+for script in sync-tunnel-to-worker.sh sync-terminal-to-worker.sh terminal-bridge.js; do
+    if [ -f "$SCRIPT_DIR/$script" ]; then
+        cp "$SCRIPT_DIR/$script" "$TARGET_HOME/$script"
+        chmod +x "$TARGET_HOME/$script"
+        chown "$TARGET_USER:$TARGET_USER" "$TARGET_HOME/$script"
+        echo "Installed: $TARGET_HOME/$script"
+    fi
+done
 
 echo "===> 3. Installing systemd services..."
-sudo cp "$SCRIPT_DIR/magpie-tunnel.service" /etc/systemd/system/magpie-tunnel.service
-sudo sed -i -e "s|/home/<YOUR_USER>|$TARGET_HOME|g" -e "s|<YOUR_USER>|$TARGET_USER|g" /etc/systemd/system/magpie-tunnel.service
-
-sudo cp "$SCRIPT_DIR/terminal-tunnel.service" /etc/systemd/system/terminal-tunnel.service
-sudo sed -i -e "s|/home/<YOUR_USER>|$TARGET_HOME|g" -e "s|<YOUR_USER>|$TARGET_USER|g" /etc/systemd/system/terminal-tunnel.service
-
-if [ -f "$SCRIPT_DIR/terminal-sync.service" ]; then
-    sudo cp "$SCRIPT_DIR/terminal-sync.service" /etc/systemd/system/terminal-sync.service
-    sudo sed -i -e "s|/home/<YOUR_USER>|$TARGET_HOME|g" -e "s|<YOUR_USER>|$TARGET_USER|g" /etc/systemd/system/terminal-sync.service
-fi
+for unit in magpie-tunnel.service terminal-tunnel.service terminal-sync.service; do
+    if [ -f "$SCRIPT_DIR/$unit" ]; then
+        sudo cp "$SCRIPT_DIR/$unit" "/etc/systemd/system/$unit"
+        sudo sed -i -e "s|/home/<YOUR_USER>|$TARGET_HOME|g" -e "s|<YOUR_USER>|$TARGET_USER|g" "/etc/systemd/system/$unit"
+        echo "Installed service: /etc/systemd/system/$unit"
+    fi
+done
 
 sudo systemctl daemon-reload
+
+echo "===> 4. Enabling systemd services..."
 sudo systemctl enable --now magpie-tunnel.service
 
 if [ -f "$TARGET_HOME/.terminal-bridge.env" ]; then
     sudo systemctl enable --now terminal-tunnel.service
-    if [ -f "/etc/systemd/system/terminal-sync.service" ]; then
-        sudo systemctl enable --now terminal-sync.service
-    fi
-    echo "terminal-tunnel.service and terminal-sync.service enabled and started."
+    sudo systemctl enable --now terminal-sync.service
+    echo "Started terminal-tunnel.service and terminal-sync.service."
 else
     sudo systemctl enable terminal-tunnel.service
-    if [ -f "/etc/systemd/system/terminal-sync.service" ]; then
-        sudo systemctl enable terminal-sync.service
-    fi
-    echo "Notice: Create $TARGET_HOME/.terminal-bridge.env then run: sudo systemctl start terminal-tunnel terminal-sync"
+    sudo systemctl enable terminal-sync.service
+    echo "Notice: Create $TARGET_HOME/.terminal-bridge.env then run:"
+    echo "  sudo systemctl start terminal-tunnel.service terminal-sync.service"
 fi
 
 echo ""
 echo "Setup complete! Cloudflare tunnels & services are configured."
-echo "View Magpie logs with: sudo journalctl -u magpie-tunnel -f"
-echo "View Terminal logs with: sudo journalctl -u terminal-tunnel -f"
+echo "Commands to inspect live logs:"
+echo "  sudo journalctl -u magpie-tunnel.service -f"
+echo "  sudo journalctl -u terminal-tunnel.service -f"
+echo "  sudo journalctl -u terminal-sync.service -f"

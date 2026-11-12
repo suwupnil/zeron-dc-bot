@@ -1,13 +1,14 @@
 {
-  "name": "magpie-discord-activity-worker",
-  "version": "1.0.0",
-  "description": "Cloudflare Worker reverse-proxy for Magpie Discord Embedded Activity",
+  "name": "discord-activity-reverse-proxy",
+  "version": "1.1.0",
+  "description": "Cloudflare Worker reverse-proxy for Magpie Web UI & VM Terminal Discord Embedded Activities",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
-    "tail": "wrangler tail"
+    "tail": "wrangler tail",
+    "types": "wrangler types"
   },
   "devDependencies": {
     "wrangler": "^4.160.0"

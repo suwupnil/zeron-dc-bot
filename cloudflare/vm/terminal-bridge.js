@@ -36,13 +36,21 @@ function isAuthorized(authHeader) {
 }
 
 function resolveKeyPath(rawPath) {
-  if (!rawPath) {
-    return path.join(os.homedir(), '.ssh', 'id_ed25519');
+  if (rawPath) {
+    if (rawPath.startsWith('~/')) {
+      return path.join(os.homedir(), rawPath.slice(2));
+    }
+    return path.resolve(rawPath);
   }
-  if (rawPath.startsWith('~/')) {
-    return path.join(os.homedir(), rawPath.slice(2));
+  const candidates = [
+    path.join(os.homedir(), '.ssh', 'id_ed25519'),
+    path.join(os.homedir(), '.ssh', 'id_rsa'),
+    path.join(os.homedir(), '.ssh', 'id_ecdsa'),
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
   }
-  return path.resolve(rawPath);
+  return candidates[0];
 }
 
 function getSSHUser() {
@@ -145,31 +153,66 @@ function buildHtmlPage() {
     term.write('\\x1b[90m[connecting to terminal session...]\\x1b[0m\\r\\n');
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = location.host;
     const search = location.search || '';
+    const isDiscord = location.hostname.includes('discordsays.com');
 
-    // Inside Discord Activities (discordsays.com), requests are routed via /.proxy/
-    // Outside (or when mapped at root), /terminal/ws is used directly.
-    const candidates = location.hostname.includes('discordsays.com')
-      ? [\`\${proto}//\${location.host}/.proxy/terminal/ws\${search}\`, \`\${proto}//\${location.host}/terminal/ws\${search}\`]
-      : [\`\${proto}//\${location.host}/terminal/ws\${search}\`, \`\${proto}//\${location.host}/.proxy/terminal/ws\${search}\`];
+    // Build comprehensive candidate list to handle both Discord URL mapping topologies:
+    // Case 1: Prefix "/" mapped to worker -> /.proxy/terminal/ws and /.proxy/ws forwarded intact.
+    // Case 2: Prefix "/terminal" mapped to worker -> Discord strips prefix, mapping to /ws.
+    // Also tests both with and without Discord's launch query parameters.
+    const candidates = [];
+    if (isDiscord) {
+      candidates.push(proto + '//' + host + '/.proxy/terminal/ws' + search);
+      candidates.push(proto + '//' + host + '/.proxy/terminal/ws');
+      candidates.push(proto + '//' + host + '/.proxy/ws' + search);
+      candidates.push(proto + '//' + host + '/.proxy/ws');
+      candidates.push(proto + '//' + host + '/terminal/ws' + search);
+      candidates.push(proto + '//' + host + '/terminal/ws');
+      candidates.push(proto + '//' + host + '/ws' + search);
+      candidates.push(proto + '//' + host + '/ws');
+    } else {
+      candidates.push(proto + '//' + host + '/terminal/ws' + search);
+      candidates.push(proto + '//' + host + '/terminal/ws');
+      candidates.push(proto + '//' + host + '/ws' + search);
+      candidates.push(proto + '//' + host + '/ws');
+      candidates.push(proto + '//' + host + '/.proxy/terminal/ws' + search);
+      candidates.push(proto + '//' + host + '/.proxy/terminal/ws');
+      candidates.push(proto + '//' + host + '/.proxy/ws');
+    }
 
     let activeWs = null;
     let isConnected = false;
     let endpointIndex = 0;
+    let attemptTimer = null;
 
     function tryConnect() {
       if (isConnected) return;
+      if (attemptTimer) {
+        clearTimeout(attemptTimer);
+        attemptTimer = null;
+      }
       if (endpointIndex >= candidates.length) {
-        term.write('\\r\\n\\x1b[31m[Failed to connect to terminal bridge. Please re-run /terminal in Discord.]\\x1b[0m\\r\\n');
+        term.write('\\r\\n\\x1b[31m[Failed to connect to terminal bridge after ' + candidates.length + ' attempts. Please re-run /terminal in Discord.]\\x1b[0m\\r\\n');
         return;
       }
 
+      const attemptNum = endpointIndex + 1;
       const target = candidates[endpointIndex++];
+      let displayPath = target;
+      try {
+        const u = new URL(target);
+        displayPath = u.pathname + (u.search ? u.search.slice(0, 32) + (u.search.length > 32 ? '...' : '') : '');
+      } catch (_) {}
+
+      term.write('\\x1b[90m[Attempt ' + attemptNum + '/' + candidates.length + ': connecting to ' + displayPath + '...]\\x1b[0m\\r\\n');
+
       let ws;
       try {
         ws = new WebSocket(target);
       } catch (err) {
-        tryConnect();
+        term.write('\\x1b[31m[Attempt ' + attemptNum + ' error: ' + (err.message || 'Constructor error') + ']\\x1b[0m\\r\\n');
+        attemptTimer = setTimeout(tryConnect, 150);
         return;
       }
 
@@ -185,9 +228,13 @@ function buildHtmlPage() {
         }
       }
 
+      let connectionHandled = false;
+
       ws.onopen = () => {
+        if (connectionHandled) return;
+        connectionHandled = true;
         isConnected = true;
-        term.write('\\x1b[2K\\r\\x1b[32m[Connected]\\x1b[0m\\r\\n');
+        term.write('\\x1b[2K\\r\\x1b[32m[Connected to terminal bridge via ' + displayPath + ']\\x1b[0m\\r\\n');
         sendResize();
         setTimeout(sendResize, 150);
       };
@@ -200,20 +247,21 @@ function buildHtmlPage() {
         }
       };
 
-      ws.onerror = () => {
-        if (!isConnected) {
-          try { ws.close(); } catch (_) {}
-          setTimeout(tryConnect, 200);
-        } else {
-          term.write('\\r\\n\\x1b[31m[WebSocket connection error]\\x1b[0m\\r\\n');
-        }
+      ws.onerror = (ev) => {
+        console.warn('[Terminal WS] Error on ' + target, ev);
+        // Do not call tryConnect() here because onclose will fire immediately after onerror!
       };
 
       ws.onclose = (ev) => {
         if (isConnected) {
-          term.write(\`\\r\\n\\x1b[33m[Session closed (code \${ev.code}\${ev.reason ? ': ' + ev.reason : ''})]\\x1b[0m\\r\\n\`);
+          term.write('\\r\\n\\x1b[33m[Session closed (code ' + ev.code + (ev.reason ? ': ' + ev.reason : '') + ')]\\x1b[0m\\r\\n');
         } else {
-          setTimeout(tryConnect, 200);
+          if (connectionHandled) return;
+          connectionHandled = true;
+          const reasonStr = ev.reason ? ' (' + ev.reason + ')' : '';
+          const codeDetail = ev.code ? 'code ' + ev.code : 'unknown code';
+          term.write('\\x1b[33m[Attempt ' + attemptNum + ' failed: ' + codeDetail + reasonStr + ']\\x1b[0m\\r\\n');
+          attemptTimer = setTimeout(tryConnect, 150);
         }
       };
 
@@ -248,7 +296,7 @@ const server = http.createServer((req, res) => {
   console.log(`[terminal-bridge] ${req.method} ${pathname}`);
 
   if (req.method === 'GET' || req.method === 'HEAD') {
-    if (pathname === '/terminal/xterm.js') {
+    if (pathname === '/terminal/xterm.js' || pathname === '/xterm.js') {
       if (XTERM_JS) {
         res.writeHead(200, {
           'Content-Type': 'application/javascript; charset=utf-8',
@@ -262,7 +310,7 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    if (pathname === '/terminal/xterm.css') {
+    if (pathname === '/terminal/xterm.css' || pathname === '/xterm.css') {
       if (XTERM_CSS) {
         res.writeHead(200, {
           'Content-Type': 'text/css; charset=utf-8',
@@ -276,7 +324,7 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    if (pathname === '/terminal/addon-fit.js') {
+    if (pathname === '/terminal/addon-fit.js' || pathname === '/addon-fit.js') {
       if (ADDON_FIT_JS) {
         res.writeHead(200, {
           'Content-Type': 'application/javascript; charset=utf-8',
@@ -290,7 +338,14 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    if (pathname === '/terminal/' || pathname === '/terminal' || pathname === '/' || pathname === '') {
+    if (
+      pathname === '/terminal/' ||
+      pathname === '/terminal' ||
+      pathname === '/terminal.html' ||
+      pathname === '/' ||
+      pathname === '/index.html' ||
+      pathname === ''
+    ) {
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -300,8 +355,13 @@ const server = http.createServer((req, res) => {
     }
   }
 
-  // Handle /terminal/ws non-upgrade HTTP requests
-  if (pathname === '/terminal/ws' || pathname === '/terminal/ws/') {
+  // Handle /terminal/ws or /ws non-upgrade HTTP requests
+  if (
+    pathname === '/terminal/ws' ||
+    pathname === '/terminal/ws/' ||
+    pathname === '/ws' ||
+    pathname === '/ws/'
+  ) {
     const authHeader = req.headers['authorization'];
     if (!isAuthorized(authHeader)) {
       res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -322,6 +382,7 @@ const server = http.createServer((req, res) => {
   res.end('Not Found');
 });
 
+const VALID_WS_PATHS = new Set(['/terminal/ws', '/terminal/ws/', '/ws', '/ws/']);
 const wss = new WebSocketServer({ noServer: true });
 const activeSockets = new Set();
 
@@ -334,7 +395,8 @@ server.on('upgrade', (req, socket, head) => {
 
   console.log(`[terminal-bridge] UPGRADE ${pathname} auth=${Boolean(req.headers['authorization'])}`);
 
-  if (pathname !== '/terminal/ws' && pathname !== '/terminal/ws/') {
+  if (!VALID_WS_PATHS.has(pathname)) {
+    console.warn(`[terminal-bridge] UPGRADE rejected invalid path: ${pathname}`);
     socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
     socket.destroy();
     return;
@@ -449,56 +511,62 @@ wss.on('connection', (ws, req) => {
         // Prevent unhandled stream error events from terminating the process
         stream.on('error', (streamErr) => {
           console.error('[terminal-bridge] SSH stream error:', streamErr.message);
-          cleanup();
         });
-
-        // Drain any pending keystrokes / data buffered during SSH handshake
-        while (pendingBuffer.length > 0) {
-          const item = pendingBuffer.shift();
-          if (sshStream.writable) {
-            sshStream.write(item);
-          }
-        }
-
-        // Pipe SSH stdout to WebSocket
-        stream.on('data', (data) => {
-          if (ws.readyState === ws.OPEN) {
-            ws.send(data);
-          }
-        });
-
-        if (stream.stderr) {
-          stream.stderr.on('error', () => {});
-          stream.stderr.on('data', (data) => {
-            if (ws.readyState === ws.OPEN) {
-              ws.send(data);
-            }
-          });
-        }
 
         stream.on('close', () => {
           cleanup();
         });
+
+        // Pipe SSH stdout/stderr directly to WebSocket client
+        stream.on('data', (chunk) => {
+          if (ws.readyState === ws.OPEN) {
+            try {
+              ws.send(chunk);
+            } catch (_) {}
+          }
+        });
+
+        if (stream.stderr) {
+          stream.stderr.on('data', (chunk) => {
+            if (ws.readyState === ws.OPEN) {
+              try {
+                ws.send(chunk);
+              } catch (_) {}
+            }
+          });
+        }
+
+        // Flush any keystrokes sent before stream was fully ready
+        if (pendingBuffer.length > 0) {
+          for (const buf of pendingBuffer) {
+            try {
+              stream.write(buf);
+            } catch (_) {}
+          }
+          pendingBuffer.length = 0;
+        }
       }
 
-      // Try executing $SHELL or fallback bash with PTY
-      sshClient.exec(shellCmd, {
-        pty: {
-          term: 'xterm-256color',
-          rows: initialRows,
-          cols: initialCols,
-        },
-      }, (err, stream) => {
-        if (err) {
-          // If exec is rejected by remote sshd configuration, fallback to client.shell
-          sshClient.shell({
-            term: 'xterm-256color',
-            rows: initialRows,
-            cols: initialCols,
-          }, onStreamReady);
+      const ptyOptions = {
+        term: 'xterm-256color',
+        cols: initialCols || 80,
+        rows: initialRows || 24,
+      };
+
+      sshClient.shell(ptyOptions, (shellErr, stream) => {
+        if (!shellErr && stream) {
+          onStreamReady(null, stream);
           return;
         }
-        onStreamReady(null, stream);
+
+        console.warn('[terminal-bridge] sshClient.shell() failed, falling back to pty exec:', shellErr ? shellErr.message : 'no stream');
+        sshClient.exec(shellCmd, { pty: ptyOptions }, (execErr, fallbackStream) => {
+          if (execErr) {
+            onStreamReady(execErr, null);
+            return;
+          }
+          onStreamReady(null, fallbackStream);
+        });
       });
     });
 
@@ -596,6 +664,15 @@ wss.on('connection', (ws, req) => {
     console.error('[terminal-bridge] WebSocket client error:', err.message);
     cleanup();
   });
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`[terminal-bridge] Port ${PORT} is already in use.`);
+  } else {
+    console.error('[terminal-bridge] Server error:', err.message);
+  }
+  process.exit(1);
 });
 
 server.listen(PORT, HOST, () => {

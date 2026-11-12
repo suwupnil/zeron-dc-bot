@@ -9,7 +9,10 @@ WorkingDirectory=/home/<YOUR_USER>
 ExecStart=/usr/bin/node /home/<YOUR_USER>/terminal-bridge.js
 Restart=always
 RestartSec=5
-EnvironmentFile=/home/<YOUR_USER>/.terminal-bridge.env
+EnvironmentFile=-/home/<YOUR_USER>/.terminal-bridge.env
+LimitNOFILE=65535
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

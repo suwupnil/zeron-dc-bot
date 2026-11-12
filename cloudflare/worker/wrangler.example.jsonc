@@ -4,6 +4,7 @@
   "main": "src/index.js",
   "compatibility_date": "2026-11-01",
   "workers_dev": true,
+  // KV namespaces for dynamic origin routing & session sync
   "kv_namespaces": [
     {
       "binding": "MAGPIE_KV",
@@ -14,8 +15,10 @@
       "id": "<YOUR_TERMINAL_KV_NAMESPACE_ID>"
     }
   ],
+  // Optional initial fallback origins before VM daemons dynamically sync trycloudflare URLs.
+  // When KV namespaces contain active origins, KV takes precedence over these vars.
   "vars": {
-    "TARGET_ORIGIN": "https://<YOUR_TUNNEL>.trycloudflare.com",
+    "TARGET_ORIGIN": "https://<YOUR_MAGPIE_TUNNEL>.trycloudflare.com",
     "TERMINAL_ORIGIN": "https://<YOUR_TERMINAL_TUNNEL>.trycloudflare.com"
   }
 }
