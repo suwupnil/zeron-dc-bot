@@ -24,6 +24,7 @@ Connect your Discord channels and threads to your local **Zeron** coding agents.
 - `/skills`: Ephemeral list of detected Skills across local agent harnesses.
 - `/mcp`: Ephemeral list of configured MCP servers and tools.
 - `/magpie`: Launch the Magpie Web UI Activity (or configure embedded activity link).
+- `/terminal`: Open a VM terminal session in Discord (Activity).
 - `/status`: Inspect active chat session, origin, model, harness, directory, and monitoring state.
 - `/interrupt`: Stop a running agent turn immediately.
 - `/help`: Show this guide.

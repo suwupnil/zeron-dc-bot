@@ -67,7 +67,7 @@ Comprehensive technical architecture, operating model, and guidelines for AI age
 | [`src/discord/handler.rs`](/zeron-dc-bot/src/discord/handler.rs) | Serenity `EventHandler` implementing slash command routing, message triage, and thread forking. |
 | [`src/discord/formatter.rs`](/zeron-dc-bot/src/discord/formatter.rs) | 2000-character boundary splitter preserving markdown code fences (` ``` `). |
 | [`src/discord/topic.rs`](/zeron-dc-bot/src/discord/topic.rs) | Channel topic synchronization (`<harness>/<model>.<effort>`) and recursive skill/MCP scanner. |
-| [`src/discord/commands/`](/zeron-dc-bot/src/discord/commands/) | Slash command implementations: `spawn`, `close`, `resume`, `model`, `effort`, `skills`, `mcp`, `magpie`, `status`, `interrupt`, `help`. |
+| [`src/discord/commands/`](/zeron-dc-bot/src/discord/commands/) | Slash command implementations: `spawn`, `close`, `resume`, `model`, `effort`, `skills`, `mcp`, `magpie`, `terminal`, `status`, `interrupt`, `help`. |
 | [`scripts/`](/zeron-dc-bot/scripts) | Automated installation scripts for Linux/macOS VMs (`scripts/install.sh` for 1-step curl installs and interactive `.env` configuration). |
 | [`cloudflare/`](/zeron-dc-bot/cloudflare) | Cloudflare Worker reverse-proxy and VM automation scripts for Discord Embedded Activities (auto-auth, self-healing origin sync, Ed25519 verification). |
 
@@ -86,7 +86,7 @@ Comprehensive technical architecture, operating model, and guidelines for AI age
    - If a session is already active, `@mention` does **not** recreate the session; it routes the message into the active conversation.
    - Casual sessions are marked `SessionOrigin::Tag` and archived in Zeron without a project directory.
 4. **Enforcement:**
-   - Any operational slash command other than `/spawn`, `/resume`, `/help`, or `/magpie` is blocked if no active session is linked to the channel.
+   - Any operational slash command other than `/spawn`, `/resume`, `/help`, `/magpie`, or `/terminal` is blocked if no active session is linked to the channel.
 
 ### 4.2 Decision Model & Chatter Suppression
 - In channels with an active session, if the bot is **not** explicitly @mentioned or replied to:
@@ -135,6 +135,11 @@ Comprehensive technical architecture, operating model, and guidelines for AI age
 ### 4.7 `/magpie` Discord Embedded Activity
 - Triggers Discord's native `LAUNCH_ACTIVITY` response (Type 12) to open the embedded Magpie UI iframe inside Discord.
 - If the application does not yet have Activities enabled in the Discord Developer Portal, it returns a graceful ephemeral guide with setup instructions and a direct link.
+- Available globally across channels without requiring an active Zeron chat session.
+
+### 4.8 `/terminal` Discord Embedded Activity
+- Triggers Discord's native `LAUNCH_ACTIVITY` response (Type 12) to open an embedded xterm.js terminal connected directly to the host VM shell via SSH.
+- Proxied through the Cloudflare Worker with path routing (`/terminal/*`), injecting `Authorization: Bearer <TERMINAL_SECRET>` into the WebSocket stream to the local bridge daemon (`terminal-bridge.js` on `127.0.0.1:7681`).
 - Available globally across channels without requiring an active Zeron chat session.
 
 ---

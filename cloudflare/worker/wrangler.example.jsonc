@@ -7,10 +7,15 @@
   "kv_namespaces": [
     {
       "binding": "MAGPIE_KV",
-      "id": "<YOUR_KV_NAMESPACE_ID>"
+      "id": "<YOUR_MAGPIE_KV_NAMESPACE_ID>"
+    },
+    {
+      "binding": "TERMINAL_KV",
+      "id": "<YOUR_TERMINAL_KV_NAMESPACE_ID>"
     }
   ],
   "vars": {
-    "TARGET_ORIGIN": "https://<YOUR_TUNNEL>.trycloudflare.com"
+    "TARGET_ORIGIN": "https://<YOUR_TUNNEL>.trycloudflare.com",
+    "TERMINAL_ORIGIN": "https://<YOUR_TERMINAL_TUNNEL>.trycloudflare.com"
   }
 }

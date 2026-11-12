@@ -16,6 +16,7 @@ sessions.json
 *.sqlite3
 
 # OS / Editor files
+node_modules/
 .DS_Store
 .DS_Store?
 ._*

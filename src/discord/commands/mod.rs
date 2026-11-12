@@ -9,3 +9,4 @@ pub mod resume;
 pub mod skills;
 pub mod spawn;
 pub mod status;
+pub mod terminal;

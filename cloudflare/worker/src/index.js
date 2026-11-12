@@ -1,11 +1,12 @@
 /**
- * Cloudflare Worker: Discord Embedded Activity Reverse Proxy (Magpie Web UI)
+ * Cloudflare Worker: Discord Embedded Activity Reverse Proxy (Magpie Web UI & VM Terminal)
  *
  * Provides a permanent HTTPS entrypoint (*.workers.dev) for Discord Activities.
  *
  * Security:
  * - Direct internet access is unconditionally blocked (HTTP 403).
- * - Master session cookie (MAGPIE_COOKIE) is only injected into Discord proxy traffic.
+ * - Master session cookie (MAGPIE_COOKIE) is only injected into Discord proxy traffic for Magpie.
+ * - Terminal requests (/terminal/*) route to the terminal bridge with Authorization: Bearer <TERMINAL_SECRET>.
  * - Optional cryptographic Ed25519 verification when DISCORD_PUBLIC_KEY is configured.
  * - Strips iframe-blocking headers (X-Frame-Options, Content-Security-Policy).
  */
@@ -95,17 +96,19 @@ export default {
     if (url.pathname === "/__status") {
       const activeOrigin = (await env.MAGPIE_KV?.get("origin_url")) || env.TARGET_ORIGIN;
       const hasActiveCookie = Boolean((await env.MAGPIE_KV?.get("active_cookie")) || env.MAGPIE_COOKIE);
+      const terminalOrigin = (await env.TERMINAL_KV?.get("origin_url")) || env.TERMINAL_ORIGIN;
       return Response.json({
         status: "healthy",
         worker: "magpie-activity",
         active_backend_origin: activeOrigin,
         active_cookie_synced: hasActiveCookie,
+        terminal_backend_configured: Boolean(terminalOrigin),
         ed25519_verification_enforced: Boolean(env.DISCORD_PUBLIC_KEY),
         timestamp: new Date().toISOString(),
       });
     }
 
-    // 2. Self-healing origin & cookie update from VM daemon (POST /__update_origin)
+    // 2a. Self-healing origin & cookie update from VM daemon for Magpie (POST /__update_origin)
     if (url.pathname === "/__update_origin") {
       if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
 
@@ -134,10 +137,35 @@ export default {
       }
     }
 
+    // 2b. Self-healing origin update from VM daemon for Terminal Bridge (POST /__update_terminal_origin)
+    if (url.pathname === "/__update_terminal_origin") {
+      if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
+
+      const auth = request.headers.get("Authorization");
+      if (!env.UPDATE_SECRET || auth !== `Bearer ${env.UPDATE_SECRET}`) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+
+      try {
+        const { origin } = await request.json();
+        if (!origin || !origin.startsWith("http")) return new Response("Invalid origin", { status: 400 });
+
+        if (env.TERMINAL_KV) {
+          await env.TERMINAL_KV.put("origin_url", origin);
+        }
+        return Response.json({
+          success: true,
+          updated_origin: origin,
+        });
+      } catch (err) {
+        return new Response(`Bad request: ${err.message}`, { status: 400 });
+      }
+    }
+
     // 3. Security gate: Block all direct public internet access
     if (!isDiscordRequest(request)) {
       return new Response(
-        "Access Denied: Direct internet access is blocked. Launch this activity directly from Discord (/magpie).",
+        "Access Denied: Direct internet access is blocked. Launch this activity directly from Discord (/magpie or /terminal).",
         { status: 403, headers: { "Content-Type": "text/plain" } }
       );
     }
@@ -159,36 +187,61 @@ export default {
       }
     }
 
-    // 5. Resolve active Magpie backend origin from KV or fallback
-    const targetOrigin = (await env.MAGPIE_KV?.get("origin_url")) || env.TARGET_ORIGIN;
-    if (!targetOrigin) {
-      return new Response("Magpie backend origin is not configured yet.", {
-        status: 503,
-        headers: { "Content-Type": "text/plain" },
-      });
+    // 5. Resolve active backend origin (path-based routing between Terminal and Magpie)
+    let backendOrigin;
+    let injectTerminalAuth = false;
+
+    if (url.pathname.startsWith("/terminal")) {
+      const terminalOrigin = (await env.TERMINAL_KV?.get("origin_url")) || env.TERMINAL_ORIGIN;
+      if (!terminalOrigin) {
+        return new Response("Terminal bridge origin is not configured yet.", {
+          status: 503,
+          headers: { "Content-Type": "text/plain" },
+        });
+      }
+      backendOrigin = terminalOrigin;
+      injectTerminalAuth = true;
+    } else {
+      const targetOrigin = (await env.MAGPIE_KV?.get("origin_url")) || env.TARGET_ORIGIN;
+      if (!targetOrigin) {
+        return new Response("Magpie backend origin is not configured yet.", {
+          status: 503,
+          headers: { "Content-Type": "text/plain" },
+        });
+      }
+      backendOrigin = targetOrigin;
     }
 
-    const targetUrl = new URL(url.pathname + url.search, targetOrigin);
+    const targetUrl = new URL(url.pathname + url.search, backendOrigin);
 
-    // Resolve active session authentication cookie (dynamic KV sync or secret fallback)
-    const activeCookie = (await env.MAGPIE_KV?.get("active_cookie")) || env.MAGPIE_COOKIE;
+    // Resolve active session authentication cookie (only for Magpie backend)
+    const activeCookie = !injectTerminalAuth
+      ? ((await env.MAGPIE_KV?.get("active_cookie")) || env.MAGPIE_COOKIE)
+      : null;
 
     // 6. WebSocket proxying (streaming / terminal sessions)
     if (request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
-      const wsUrl = new URL(url.pathname + url.search, targetOrigin);
-      wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
+      const wsUrl = new URL(url.pathname + url.search, backendOrigin);
+      if (wsUrl.protocol === "wss:") wsUrl.protocol = "https:";
+      if (wsUrl.protocol === "ws:") wsUrl.protocol = "http:";
 
       const wsHeaders = new Headers(request.headers);
       wsHeaders.set("Host", wsUrl.host);
       if (activeCookie) wsHeaders.set("Cookie", activeCookie);
+      if (injectTerminalAuth && env.TERMINAL_SECRET) {
+        wsHeaders.set("Authorization", `Bearer ${env.TERMINAL_SECRET}`);
+      }
 
       return fetch(wsUrl.toString(), { headers: wsHeaders });
     }
 
-    // 7. Forward HTTP request with injected authentication cookie
+    // 7. Forward HTTP request with injected authentication
     const forwardHeaders = new Headers(request.headers);
     forwardHeaders.set("Host", targetUrl.host);
     if (activeCookie) forwardHeaders.set("Cookie", activeCookie);
+    if (injectTerminalAuth && env.TERMINAL_SECRET) {
+      forwardHeaders.set("Authorization", `Bearer ${env.TERMINAL_SECRET}`);
+    }
 
     try {
       const resp = await fetch(targetUrl.toString(), {
@@ -205,7 +258,7 @@ export default {
       const location = respHeaders.get("Location");
       if (location) {
         try {
-          const locUrl = new URL(location, targetOrigin);
+          const locUrl = new URL(location, backendOrigin);
           locUrl.host = url.host;
           locUrl.protocol = url.protocol;
           respHeaders.set("Location", locUrl.toString());
@@ -222,7 +275,7 @@ export default {
         headers: respHeaders,
       });
     } catch (err) {
-      return new Response(`Failed to reach Magpie backend: ${err.message}`, {
+      return new Response(`Failed to reach backend: ${err.message}`, {
         status: 502,
         headers: { "Content-Type": "text/plain" },
       });
