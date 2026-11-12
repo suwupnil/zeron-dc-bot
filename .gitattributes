@@ -5,5 +5,5 @@
 *.jsonc linguist-language=JSON
 *.json linguist-language=JSON
 *.html linguist-language=HTML
-.git* linguist-language="Git Attributes"
+.git* linguist-language=Ignore-List
 *.yml linguist-language=YAML

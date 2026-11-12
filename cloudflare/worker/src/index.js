@@ -69,12 +69,14 @@ async function verifyDiscordSignature(request, rawBodyBuffer, publicKeyHex) {
 
 // Check if an incoming request genuinely originates from Discord's Activity Proxy
 function isDiscordRequest(request) {
+  const cfWorker = request.headers.get("cf-worker") || "";
   const fwdHost = request.headers.get("X-Forwarded-Host") || "";
   const fwd = request.headers.get("Forwarded") || "";
   const via = request.headers.get("Via") || "";
   const referer = request.headers.get("Referer") || "";
 
   return (
+    cfWorker.includes("discordsays.com") ||
     fwdHost.includes(".discordsays.com") ||
     fwd.includes(".discordsays.com") ||
     referer.includes(".discordsays.com") ||
