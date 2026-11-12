@@ -291,12 +291,90 @@ export default {
 
       const wsHeaders = new Headers(request.headers);
       wsHeaders.set("Host", wsUrl.host);
+      wsHeaders.set("Upgrade", "websocket");
+      wsHeaders.set("Connection", "Upgrade");
       if (activeCookie) wsHeaders.set("Cookie", activeCookie);
       if (injectTerminalAuth && env.TERMINAL_SECRET) {
         wsHeaders.set("Authorization", `Bearer ${env.TERMINAL_SECRET}`);
       }
 
-      return fetch(wsUrl.toString(), { headers: wsHeaders });
+      try {
+        const backendResponse = await fetch(wsUrl.toString(), {
+          headers: wsHeaders,
+        });
+
+        const backendWs = backendResponse.webSocket;
+        if (!backendWs) {
+          return backendResponse;
+        }
+
+        const pair = new WebSocketPair();
+        const [client, server] = Object.values(pair);
+
+        server.binaryType = "arraybuffer";
+        backendWs.binaryType = "arraybuffer";
+
+        server.accept();
+        backendWs.accept();
+
+        server.addEventListener("message", async (event) => {
+          try {
+            let data = event.data;
+            if (typeof data !== "string" && !(data instanceof ArrayBuffer) && !ArrayBuffer.isView(data)) {
+              if (data && typeof data.arrayBuffer === "function") {
+                data = await data.arrayBuffer();
+              }
+            }
+            backendWs.send(data);
+          } catch (_) {}
+        });
+
+        backendWs.addEventListener("message", async (event) => {
+          try {
+            let data = event.data;
+            if (typeof data !== "string" && !(data instanceof ArrayBuffer) && !ArrayBuffer.isView(data)) {
+              if (data && typeof data.arrayBuffer === "function") {
+                data = await data.arrayBuffer();
+              }
+            }
+            server.send(data);
+          } catch (_) {}
+        });
+
+        server.addEventListener("close", (event) => {
+          try {
+            backendWs.close(event.code, event.reason);
+          } catch (_) {}
+        });
+
+        backendWs.addEventListener("close", (event) => {
+          try {
+            server.close(event.code, event.reason);
+          } catch (_) {}
+        });
+
+        server.addEventListener("error", () => {
+          try {
+            backendWs.close(1011, "Client WS error");
+          } catch (_) {}
+        });
+
+        backendWs.addEventListener("error", () => {
+          try {
+            server.close(1011, "Backend WS error");
+          } catch (_) {}
+        });
+
+        return new Response(null, {
+          status: 101,
+          webSocket: client,
+        });
+      } catch (err) {
+        return new Response(`WebSocket connection failed: ${err.message}`, {
+          status: 502,
+          headers: { "Content-Type": "text/plain" },
+        });
+      }
     }
 
     // 7. Forward HTTP request with injected authentication
@@ -332,6 +410,23 @@ export default {
       // Remove headers that prevent iframe rendering inside Discord
       respHeaders.delete("X-Frame-Options");
       respHeaders.delete("Content-Security-Policy");
+
+      // Inject floating "💻 Terminal" switcher into Magpie HTML pages
+      if (!isTerminal && respHeaders.get("Content-Type")?.includes("text/html")) {
+        const toggleHtml = `<a id="switch-terminal-link" href="/?mode=terminal" title="Switch to Terminal" style="position:fixed;top:8px;right:12px;z-index:999999;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:11px;color:#949ba4;text-decoration:none;background:rgba(30,31,34,0.85);padding:4px 10px;border-radius:4px;border:1px solid #3f4147;backdrop-filter:blur(4px);transition:all 0.2s;" onmouseover="this.style.color='#f2f3f5';this.style.borderColor='#5865f2'" onmouseout="this.style.color='#949ba4';this.style.borderColor='#3f4147'">💻 Terminal</a><script>(function(){try{var l=document.getElementById('switch-terminal-link');if(l&&location.search){var p=new URLSearchParams(location.search);p.set('mode','terminal');l.href='/?'+p.toString();}}catch(_){}})();</script>`;
+
+        return new HTMLRewriter()
+          .on("body", {
+            element(e) {
+              e.append(toggleHtml, { html: true });
+            },
+          })
+          .transform(new Response(resp.body, {
+            status: resp.status,
+            statusText: resp.statusText,
+            headers: respHeaders,
+          }));
+      }
 
       return new Response(resp.body, {
         status: resp.status,

@@ -56,13 +56,35 @@ function getSSHUser() {
   }
 }
 
+function readAsset(filename) {
+  const candidates = [
+    path.join(__dirname, 'vendor', filename),
+    path.join(__dirname, 'node_modules', filename),
+    path.join(__dirname, filename),
+    path.join('/home/suwu/node_modules', filename),
+    path.join(os.homedir(), 'node_modules', filename),
+  ];
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(c)) {
+        return fs.readFileSync(c);
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
+const XTERM_JS = readAsset('xterm.js') || readAsset('xterm/lib/xterm.js');
+const XTERM_CSS = readAsset('xterm.css') || readAsset('xterm/css/xterm.css');
+const ADDON_FIT_JS = readAsset('addon-fit.js') || readAsset('@xterm/addon-fit/lib/addon-fit.js');
+
 const HTML_PAGE = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Discord Activity VM Terminal</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+  <link rel="stylesheet" href="/terminal/xterm.css" />
   <style>
     * {
       box-sizing: border-box;
@@ -92,8 +114,8 @@ const HTML_PAGE = `<!DOCTYPE html>
 <body>
   <div id="terminal-container"></div>
   <a id="switch-link" href="/?mode=magpie" title="Switch to Magpie Web UI" style="position: absolute; top: 8px; right: 12px; z-index: 1000; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 11px; color: #949ba4; text-decoration: none; background: rgba(30, 31, 34, 0.85); padding: 4px 10px; border-radius: 4px; border: 1px solid #3f4147; backdrop-filter: blur(4px); transition: all 0.2s;" onmouseover="this.style.color='#f2f3f5';this.style.borderColor='#5865f2'" onmouseout="this.style.color='#949ba4';this.style.borderColor='#3f4147'">🐦 Magpie</a>
-  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+  <script src="/terminal/xterm.js"></script>
+  <script src="/terminal/addon-fit.js"></script>
   <script>
     const switchLink = document.getElementById('switch-link');
     if (switchLink && location.search) {
@@ -101,7 +123,16 @@ const HTML_PAGE = `<!DOCTYPE html>
       cleanParams.set('mode', 'magpie');
       switchLink.href = '/?' + cleanParams.toString();
     }
-    const term = new Terminal({
+
+    const TerminalConstructor = (window.Terminal && window.Terminal.Terminal) || window.Terminal;
+    const FitAddonConstructor = (window.FitAddon && window.FitAddon.FitAddon) || window.FitAddon;
+
+    if (!TerminalConstructor) {
+      document.body.innerHTML += '<div style="color:#ff6b6b;padding:24px;font-family:monospace;font-size:14px;background:#18191c;margin:20px;border-radius:6px;border:1px solid #ed4245;">Failed to load terminal bundle.</div>';
+      throw new Error('Terminal constructor not found');
+    }
+
+    const term = new TerminalConstructor({
       cursorBlink: true,
       fontSize: 14,
       fontFamily: 'Consolas, "Courier New", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto',
@@ -112,33 +143,46 @@ const HTML_PAGE = `<!DOCTYPE html>
       }
     });
 
-    const fitAddon = new FitAddon.FitAddon();
-    term.loadAddon(fitAddon);
-    term.open(document.getElementById('terminal-container'));
-    fitAddon.fit();
+    const fitAddon = FitAddonConstructor ? new FitAddonConstructor() : null;
+    if (fitAddon) {
+      term.loadAddon(fitAddon);
+    }
+    const container = document.getElementById('terminal-container');
+    term.open(container);
+    if (fitAddon) {
+      fitAddon.fit();
+    }
+    term.focus();
+
+    // Auto-focus on click or touch for mobile devices
+    window.addEventListener('click', () => term.focus());
+    container.addEventListener('touchstart', () => term.focus(), { passive: true });
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = \`\${proto}//\${location.host}/terminal/ws\`;
+    const wsUrl = \`\${proto}//\${location.host}/terminal/ws\${location.search}\`;
     const ws = new WebSocket(wsUrl);
     ws.binaryType = 'arraybuffer';
 
+    function sendResize() {
+      if (fitAddon) {
+        try { fitAddon.fit(); } catch (_) {}
+      }
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      }
+    }
+
     ws.onopen = () => {
-      fitAddon.fit();
-      ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      sendResize();
+      setTimeout(sendResize, 150);
     };
 
     window.addEventListener('load', () => {
-      fitAddon.fit();
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-      }
+      sendResize();
     });
 
     window.addEventListener('resize', () => {
-      fitAddon.fit();
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-      }
+      sendResize();
     });
 
     term.onData((data) => {
@@ -155,12 +199,12 @@ const HTML_PAGE = `<!DOCTYPE html>
       }
     };
 
-    ws.onclose = () => {
-      term.write('\\r\\n[disconnected]\\r\\n');
+    ws.onclose = (ev) => {
+      term.write(\`\\r\\n\\x1b[33m[disconnected (code \${ev.code}\${ev.reason ? ': ' + ev.reason : ''})]\\x1b[0m\\r\\n\`);
     };
 
     ws.onerror = () => {
-      term.write('\\r\\n[connection error]\\r\\n');
+      term.write('\\r\\n\\x1b[31m[WebSocket connection error]\\x1b[0m\\r\\n');
     };
   </script>
 </body>
@@ -169,13 +213,57 @@ const HTML_PAGE = `<!DOCTYPE html>
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
 
-  if ((req.method === 'GET' || req.method === 'HEAD') && (url.pathname === '/terminal/' || url.pathname === '/terminal' || url.pathname === '/' || url.pathname === '')) {
-    res.writeHead(200, {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
-    });
-    res.end(HTML_PAGE);
-    return;
+  if (req.method === 'GET' || req.method === 'HEAD') {
+    if (url.pathname === '/terminal/xterm.js') {
+      if (XTERM_JS) {
+        res.writeHead(200, {
+          'Content-Type': 'application/javascript; charset=utf-8',
+          'Cache-Control': 'public, max-age=86400',
+        });
+        res.end(XTERM_JS);
+      } else {
+        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('xterm.js not found');
+      }
+      return;
+    }
+
+    if (url.pathname === '/terminal/xterm.css') {
+      if (XTERM_CSS) {
+        res.writeHead(200, {
+          'Content-Type': 'text/css; charset=utf-8',
+          'Cache-Control': 'public, max-age=86400',
+        });
+        res.end(XTERM_CSS);
+      } else {
+        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('xterm.css not found');
+      }
+      return;
+    }
+
+    if (url.pathname === '/terminal/addon-fit.js') {
+      if (ADDON_FIT_JS) {
+        res.writeHead(200, {
+          'Content-Type': 'application/javascript; charset=utf-8',
+          'Cache-Control': 'public, max-age=86400',
+        });
+        res.end(ADDON_FIT_JS);
+      } else {
+        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('addon-fit.js not found');
+      }
+      return;
+    }
+
+    if (url.pathname === '/terminal/' || url.pathname === '/terminal' || url.pathname === '/' || url.pathname === '') {
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+      });
+      res.end(HTML_PAGE);
+      return;
+    }
   }
 
   // Handle /terminal/ws non-upgrade HTTP requests
