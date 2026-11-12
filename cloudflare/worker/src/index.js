@@ -96,7 +96,9 @@ export default {
     if (url.pathname === "/__status") {
       const activeOrigin = (await env.MAGPIE_KV?.get("origin_url")) || env.TARGET_ORIGIN;
       const hasActiveCookie = Boolean((await env.MAGPIE_KV?.get("active_cookie")) || env.MAGPIE_COOKIE);
-      const terminalOrigin = (await env.TERMINAL_KV?.get("origin_url")) || env.TERMINAL_ORIGIN;
+      const terminalOrigin = (await env.TERMINAL_KV?.get("origin_url"))
+        || (await env.MAGPIE_KV?.get("terminal_origin_url"))
+        || env.TERMINAL_ORIGIN;
       return Response.json({
         status: "healthy",
         worker: "magpie-activity",
@@ -152,6 +154,8 @@ export default {
 
         if (env.TERMINAL_KV) {
           await env.TERMINAL_KV.put("origin_url", origin);
+        } else if (env.MAGPIE_KV) {
+          await env.MAGPIE_KV.put("terminal_origin_url", origin);
         }
         return Response.json({
           success: true,
@@ -192,7 +196,9 @@ export default {
     let injectTerminalAuth = false;
 
     if (url.pathname.startsWith("/terminal")) {
-      const terminalOrigin = (await env.TERMINAL_KV?.get("origin_url")) || env.TERMINAL_ORIGIN;
+      const terminalOrigin = (await env.TERMINAL_KV?.get("origin_url"))
+        || (await env.MAGPIE_KV?.get("terminal_origin_url"))
+        || env.TERMINAL_ORIGIN;
       if (!terminalOrigin) {
         return new Response("Terminal bridge origin is not configured yet.", {
           status: 503,
