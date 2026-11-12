@@ -75,6 +75,7 @@ function isDiscordRequest(request) {
   const fwd = request.headers.get("Forwarded") || "";
   const via = request.headers.get("Via") || "";
   const referer = request.headers.get("Referer") || "";
+  const origin = request.headers.get("Origin") || "";
 
   return (
     cfWorker.includes("discordsays.com") ||
@@ -82,6 +83,8 @@ function isDiscordRequest(request) {
     fwd.includes(".discordsays.com") ||
     referer.includes(".discordsays.com") ||
     referer.includes("discord.com") ||
+    origin.includes("discordsays.com") ||
+    origin.includes("discord.com") ||
     via.toLowerCase().includes("discord") ||
     request.headers.has("X-Discord-Proxy-Payload") ||
     request.headers.has("X-Signature-Ed25519")
@@ -228,12 +231,19 @@ export default {
     let backendOrigin;
     let injectTerminalAuth = false;
 
+    let pathname = url.pathname;
+    if (pathname.startsWith("/.proxy/")) {
+      pathname = "/" + pathname.slice(8);
+    } else if (pathname === "/.proxy") {
+      pathname = "/";
+    }
+
     const channelId = url.searchParams.get("channel_id");
     const queryMode = url.searchParams.get("mode");
 
-    let isTerminal = url.pathname.startsWith("/terminal");
+    let isTerminal = pathname.startsWith("/terminal");
 
-    if (!isTerminal && (url.pathname === "/" || url.pathname === "")) {
+    if (!isTerminal && (pathname === "/" || pathname === "")) {
       if (queryMode === "terminal") {
         isTerminal = true;
       } else if (queryMode === "magpie") {
@@ -276,7 +286,7 @@ export default {
       backendOrigin = targetOrigin;
     }
 
-    const targetUrl = new URL(url.pathname + url.search, backendOrigin);
+    const targetUrl = new URL(pathname + url.search, backendOrigin);
 
     // Resolve active session authentication cookie (only for Magpie backend)
     const activeCookie = !injectTerminalAuth
@@ -285,7 +295,7 @@ export default {
 
     // 6. WebSocket proxying (streaming / terminal sessions)
     if (request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
-      const wsUrl = new URL(url.pathname + url.search, backendOrigin);
+      const wsUrl = new URL(pathname + url.search, backendOrigin);
       if (wsUrl.protocol === "wss:") wsUrl.protocol = "https:";
       if (wsUrl.protocol === "ws:") wsUrl.protocol = "http:";
 
@@ -410,23 +420,6 @@ export default {
       // Remove headers that prevent iframe rendering inside Discord
       respHeaders.delete("X-Frame-Options");
       respHeaders.delete("Content-Security-Policy");
-
-      // Inject floating "💻 Terminal" switcher into Magpie HTML pages
-      if (!isTerminal && respHeaders.get("Content-Type")?.includes("text/html")) {
-        const toggleHtml = `<a id="switch-terminal-link" href="/?mode=terminal" title="Switch to Terminal" style="position:fixed;top:8px;right:12px;z-index:999999;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:11px;color:#949ba4;text-decoration:none;background:rgba(30,31,34,0.85);padding:4px 10px;border-radius:4px;border:1px solid #3f4147;backdrop-filter:blur(4px);transition:all 0.2s;" onmouseover="this.style.color='#f2f3f5';this.style.borderColor='#5865f2'" onmouseout="this.style.color='#949ba4';this.style.borderColor='#3f4147'">💻 Terminal</a><script>(function(){try{var l=document.getElementById('switch-terminal-link');if(l&&location.search){var p=new URLSearchParams(location.search);p.set('mode','terminal');l.href='/?'+p.toString();}}catch(_){}})();</script>`;
-
-        return new HTMLRewriter()
-          .on("body", {
-            element(e) {
-              e.append(toggleHtml, { html: true });
-            },
-          })
-          .transform(new Response(resp.body, {
-            status: resp.status,
-            statusText: resp.statusText,
-            headers: respHeaders,
-          }));
-      }
 
       return new Response(resp.body, {
         status: resp.status,
