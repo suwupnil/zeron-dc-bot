@@ -1,0 +1,13 @@
+[Unit]
+Description=Sync Terminal Bridge Tunnel URL to Cloudflare Worker
+After=terminal-tunnel.service
+
+[Service]
+Type=simple
+User=<YOUR_USER>
+ExecStart=/home/<YOUR_USER>/sync-terminal-to-worker.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

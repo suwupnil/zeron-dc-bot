@@ -8,6 +8,11 @@
 # ==============================================================================
 set -eo pipefail
 
+if [ -f "${HOME}/.terminal-bridge.env" ]; then
+    # shellcheck disable=SC1091
+    source "${HOME}/.terminal-bridge.env"
+fi
+
 WORKER_ENDPOINT="${TERMINAL_WORKER_ENDPOINT:-https://<YOUR_WORKER_SUBDOMAIN>.workers.dev/__update_terminal_origin}"
 UPDATE_SECRET="${UPDATE_SECRET:-<YOUR_UPDATE_SECRET>}"
 LOCAL_PORT="${TERMINAL_PORT:-7681}"

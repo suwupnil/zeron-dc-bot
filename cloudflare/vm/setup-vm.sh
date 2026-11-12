@@ -43,15 +43,26 @@ sudo sed -i -e "s|/home/<YOUR_USER>|$TARGET_HOME|g" -e "s|<YOUR_USER>|$TARGET_US
 sudo cp "$SCRIPT_DIR/terminal-tunnel.service" /etc/systemd/system/terminal-tunnel.service
 sudo sed -i -e "s|/home/<YOUR_USER>|$TARGET_HOME|g" -e "s|<YOUR_USER>|$TARGET_USER|g" /etc/systemd/system/terminal-tunnel.service
 
+if [ -f "$SCRIPT_DIR/terminal-sync.service" ]; then
+    sudo cp "$SCRIPT_DIR/terminal-sync.service" /etc/systemd/system/terminal-sync.service
+    sudo sed -i -e "s|/home/<YOUR_USER>|$TARGET_HOME|g" -e "s|<YOUR_USER>|$TARGET_USER|g" /etc/systemd/system/terminal-sync.service
+fi
+
 sudo systemctl daemon-reload
 sudo systemctl enable --now magpie-tunnel.service
 
 if [ -f "$TARGET_HOME/.terminal-bridge.env" ]; then
     sudo systemctl enable --now terminal-tunnel.service
-    echo "terminal-tunnel.service enabled and started."
+    if [ -f "/etc/systemd/system/terminal-sync.service" ]; then
+        sudo systemctl enable --now terminal-sync.service
+    fi
+    echo "terminal-tunnel.service and terminal-sync.service enabled and started."
 else
     sudo systemctl enable terminal-tunnel.service
-    echo "Notice: Create $TARGET_HOME/.terminal-bridge.env then run: sudo systemctl start terminal-tunnel"
+    if [ -f "/etc/systemd/system/terminal-sync.service" ]; then
+        sudo systemctl enable terminal-sync.service
+    fi
+    echo "Notice: Create $TARGET_HOME/.terminal-bridge.env then run: sudo systemctl start terminal-tunnel terminal-sync"
 fi
 
 echo ""

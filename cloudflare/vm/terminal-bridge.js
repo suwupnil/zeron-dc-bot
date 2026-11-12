@@ -162,7 +162,7 @@ const HTML_PAGE = `<!DOCTYPE html>
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
 
-  if (req.method === 'GET' && (url.pathname === '/terminal/' || url.pathname === '/terminal')) {
+  if ((req.method === 'GET' || req.method === 'HEAD') && (url.pathname === '/terminal/' || url.pathname === '/terminal')) {
     res.writeHead(200, {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-cache, no-store, must-revalidate',
