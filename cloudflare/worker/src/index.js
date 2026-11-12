@@ -166,6 +166,39 @@ export default {
       }
     }
 
+    // 2c. Update active activity mode for channel (POST /__set_launch_mode)
+    if (url.pathname === "/__set_launch_mode") {
+      if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
+
+      const auth = request.headers.get("Authorization");
+      if (!env.UPDATE_SECRET || auth !== `Bearer ${env.UPDATE_SECRET}`) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+
+      try {
+        const { channel_id, mode } = await request.json();
+        if (!mode || (mode !== "terminal" && mode !== "magpie")) {
+          return new Response("Invalid mode", { status: 400 });
+        }
+
+        const kv = env.TERMINAL_KV || env.MAGPIE_KV;
+        if (kv) {
+          if (channel_id) {
+            await kv.put(`channel_mode:${channel_id}`, mode, { expirationTtl: 3600 });
+          }
+          await kv.put("last_launch_mode", mode, { expirationTtl: 3600 });
+        }
+
+        return Response.json({
+          success: true,
+          channel_id,
+          mode,
+        });
+      } catch (err) {
+        return new Response(`Bad request: ${err.message}`, { status: 400 });
+      }
+    }
+
     // 3. Security gate: Block all direct public internet access
     if (!isDiscordRequest(request)) {
       return new Response(
@@ -191,11 +224,36 @@ export default {
       }
     }
 
-    // 5. Resolve active backend origin (path-based routing between Terminal and Magpie)
+    // 5. Resolve active backend origin (path-based & launch-mode routing between Terminal and Magpie)
     let backendOrigin;
     let injectTerminalAuth = false;
 
-    if (url.pathname.startsWith("/terminal")) {
+    const channelId = url.searchParams.get("channel_id");
+    const queryMode = url.searchParams.get("mode");
+
+    let isTerminal = url.pathname.startsWith("/terminal");
+
+    if (!isTerminal && (url.pathname === "/" || url.pathname === "")) {
+      if (queryMode === "terminal") {
+        isTerminal = true;
+      } else if (queryMode === "magpie") {
+        isTerminal = false;
+      } else {
+        const kv = env.TERMINAL_KV || env.MAGPIE_KV;
+        let mode = null;
+        if (channelId && kv) {
+          mode = await kv.get(`channel_mode:${channelId}`);
+        }
+        if (!mode && kv) {
+          mode = await kv.get("last_launch_mode");
+        }
+        if (mode === "terminal") {
+          isTerminal = true;
+        }
+      }
+    }
+
+    if (isTerminal) {
       const terminalOrigin = (await env.TERMINAL_KV?.get("origin_url"))
         || (await env.MAGPIE_KV?.get("terminal_origin_url"))
         || env.TERMINAL_ORIGIN;

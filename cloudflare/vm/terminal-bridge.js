@@ -91,9 +91,16 @@ const HTML_PAGE = `<!DOCTYPE html>
 </head>
 <body>
   <div id="terminal-container"></div>
+  <a id="switch-link" href="/?mode=magpie" title="Switch to Magpie Web UI" style="position: absolute; top: 8px; right: 12px; z-index: 1000; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 11px; color: #949ba4; text-decoration: none; background: rgba(30, 31, 34, 0.85); padding: 4px 10px; border-radius: 4px; border: 1px solid #3f4147; backdrop-filter: blur(4px); transition: all 0.2s;" onmouseover="this.style.color='#f2f3f5';this.style.borderColor='#5865f2'" onmouseout="this.style.color='#949ba4';this.style.borderColor='#3f4147'">🐦 Magpie</a>
   <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
   <script>
+    const switchLink = document.getElementById('switch-link');
+    if (switchLink && location.search) {
+      const cleanParams = new URLSearchParams(location.search);
+      cleanParams.set('mode', 'magpie');
+      switchLink.href = '/?' + cleanParams.toString();
+    }
     const term = new Terminal({
       cursorBlink: true,
       fontSize: 14,
@@ -162,7 +169,7 @@ const HTML_PAGE = `<!DOCTYPE html>
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
 
-  if ((req.method === 'GET' || req.method === 'HEAD') && (url.pathname === '/terminal/' || url.pathname === '/terminal')) {
+  if ((req.method === 'GET' || req.method === 'HEAD') && (url.pathname === '/terminal/' || url.pathname === '/terminal' || url.pathname === '/' || url.pathname === '')) {
     res.writeHead(200, {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-cache, no-store, must-revalidate',

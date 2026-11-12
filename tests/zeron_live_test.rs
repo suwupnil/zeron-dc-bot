@@ -107,6 +107,7 @@ async fn test_live_zeron_mcp_handshake_and_tools() {
         cloudflare_model: "@cf/cloudflare/clef-flash".to_string(),
         cloudflare_ai_endpoint: None,
         magpie_url: None,
+        update_secret: None,
     };
     let state = zeron_dc_bot::state::AppState::new(config, client.clone());
     let initial_session = state

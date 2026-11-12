@@ -10,11 +10,45 @@ pub fn register() -> CreateCommand {
     CreateCommand::new("terminal").description("Open a VM terminal session in Discord")
 }
 
+pub async fn notify_worker_launch_mode(state: &AppState, channel_id: u64, mode: &str) {
+    let worker_url = match &state.config.magpie_url {
+        Some(url) => url.clone(),
+        None => return,
+    };
+
+    let endpoint = format!("{}/__set_launch_mode", worker_url.trim_end_matches('/'));
+    let secret = state
+        .config
+        .update_secret
+        .as_deref()
+        .unwrap_or("suwu-magpie-token-2026");
+
+    let client = reqwest::Client::new();
+    let body = serde_json::json!({
+        "channel_id": channel_id.to_string(),
+        "mode": mode,
+    });
+
+    if let Err(e) = client
+        .post(&endpoint)
+        .header("Authorization", format!("Bearer {}", secret))
+        .json(&body)
+        .timeout(std::time::Duration::from_millis(1500))
+        .send()
+        .await
+    {
+        warn!("Failed to coordinate activity launch mode with worker: {}", e);
+    }
+}
+
 pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) -> BotResult<()> {
     info!(
         "User {} requested /terminal activity in channel {}",
         command.user.name, command.channel_id
     );
+
+    // Notify worker of launch mode for this channel so the iframe routes to terminal
+    notify_worker_launch_mode(state, command.channel_id.get(), "terminal").await;
 
     match command
         .create_response(&ctx.http, CreateInteractionResponse::LaunchActivity)

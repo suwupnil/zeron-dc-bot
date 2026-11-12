@@ -16,6 +16,14 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
         command.user.name, command.channel_id
     );
 
+    // Notify worker of launch mode for this channel so the iframe routes to magpie
+    crate::discord::commands::terminal::notify_worker_launch_mode(
+        state,
+        command.channel_id.get(),
+        "magpie",
+    )
+    .await;
+
     // Attempt to respond with Discord's native LAUNCH_ACTIVITY interaction response (type 12)
     match command
         .create_response(&ctx.http, CreateInteractionResponse::LaunchActivity)
