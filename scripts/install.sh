@@ -352,8 +352,33 @@ if [ "$RECONFIGURE" = true ]; then
         printf "%bClef skipped. The bot will automatically use the built-in conversational heuristic fallback.%b\n" "$CYAN" "$RESET"
     fi
 
-    printf "\n%b--- Optional Integrations ---%b\n" "$BOLD" "$RESET"
-    prompt_read "Configure Magpie Activity URL? (press Enter to skip): " MAGPIE_URL ""
+    printf "\n%b--- Discord Embedded Activities (/magpie & /terminal) ---%b\n" "$BOLD" "$RESET"
+    printf "To enable embedded Magpie Web UI and VM Terminal activities in Discord,\n"
+    printf "the bot requires your Cloudflare Worker URL and the shared UPDATE_SECRET.\n"
+    printf "Both are required to safely coordinate activity switching for /magpie and /terminal.\n\n"
+    prompt_read "Do you want to configure Discord Activities? [y/N]: " SETUP_ACTIVITIES "n"
+
+    MAGPIE_URL=""
+    UPDATE_SECRET=""
+
+    if [[ "$SETUP_ACTIVITIES" =~ ^[Yy]$ ]]; then
+        while [ -z "$MAGPIE_URL" ]; do
+            prompt_read "  • Cloudflare Worker URL (e.g., https://magpie-activity.<subdomain>.workers.dev): " MAGPIE_URL ""
+            if [ -z "$MAGPIE_URL" ]; then
+                printf "  %bWorker URL is required for Discord Activities.%b\n" "$RED" "$RESET"
+            fi
+        done
+
+        while [ -z "$UPDATE_SECRET" ]; do
+            prompt_secret "  • UPDATE_SECRET (shared Worker auth secret): " UPDATE_SECRET
+            if [ -z "$UPDATE_SECRET" ]; then
+                printf "  %bUPDATE_SECRET is required to coordinate launch mode with Worker.%b\n" "$RED" "$RESET"
+            fi
+        done
+        printf "%b✔ Discord Activities configuration collected.%b\n" "$GREEN" "$RESET"
+    else
+        printf "%bActivities skipped. Note: /magpie and /terminal will require MAGPIE_URL and UPDATE_SECRET in .env to function.%b\n" "$CYAN" "$RESET"
+    fi
 
     # Generate .env file
     cat << EOF > "$ENV_FILE"
@@ -421,11 +446,19 @@ EOF
 EOF
     fi
 
-    if [ -n "$MAGPIE_URL" ]; then
+    if [ -n "$MAGPIE_URL" ] && [ -n "$UPDATE_SECRET" ]; then
         cat << EOF >> "$ENV_FILE"
 
-# Magpie Discord Activity
+# Magpie & Terminal Discord Embedded Activities (Required for /magpie and /terminal)
 MAGPIE_URL=${MAGPIE_URL}
+UPDATE_SECRET=${UPDATE_SECRET}
+EOF
+    else
+        cat << 'EOF' >> "$ENV_FILE"
+
+# Magpie & Terminal Discord Embedded Activities (Required for /magpie and /terminal)
+# MAGPIE_URL=https://magpie-activity.your-worker.workers.dev
+# UPDATE_SECRET=your_update_secret_token_here
 EOF
     fi
 

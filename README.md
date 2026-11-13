@@ -74,7 +74,8 @@ All activities execute strictly on the target host/VM running the Zeron Engine. 
 | `/resume [session_id]` | Re-activate a closed session or switch to an archived session | Validates no conflicting channel bindings. |
 | `/skills` | List detected skills across local installations | Ephemeral output of detected skills. |
 | `/mcp` | List configured MCP servers and tool registries | Ephemeral output of active and configured MCP servers. |
-| `/magpie` | Launch the Magpie Web UI Activity iframe | Discord native Activity integration (Type 12 `LAUNCH_ACTIVITY`). |
+| `/magpie` | Launch the Magpie Web UI Activity iframe | Discord native Activity integration (requires `MAGPIE_URL` & `UPDATE_SECRET`). |
+| `/terminal` | Launch embedded VM terminal Activity | Discord native Activity integration (requires `MAGPIE_URL` & `UPDATE_SECRET`). |
 | `/status` | View current chat session, active model, and directory | Displays live session info and decision model state. |
 | `/interrupt` | Stop a currently running agent turn immediately | Calls Zeron MCP `interrupt_chat`. |
 | `/help` | Display interactive guide and command manual | Ephemeral formatted markdown manual. |
@@ -95,7 +96,7 @@ curl -fsSL https://raw.githubusercontent.com/suwupnil/zeron-dc-bot/main/scripts/
    - **Mandatory Discord Keys:** Discord Bot Token (`DISCORD_TOKEN`) and Application ID (`APPLICATION_ID`).
    - **Zeron Settings:** Binary path (`ZERON_PATH`), default agent harness (`DEFAULT_HARNESS`), optional default model (`DEFAULT_MODEL`), and default project workspace directory (`DEFAULT_PROJECT_DIR`).
    - **Cloudflare Clef Filter:** Prompts if you would like to enable Cloudflare Clef (`@cf/cloudflare/clef-flash`) for multi-user channels. If yes, it collects your Account ID and API token. If no, the bot automatically uses the built-in conversational heuristic fallback.
-   - **Magpie Activity:** Optional URL for Discord Embedded Activity.
+   - **Embedded Activities (/magpie & /terminal):** Prompts for `MAGPIE_URL` and `UPDATE_SECRET` (both required to coordinate launch mode with the Cloudflare Worker).
 3. **Automated systemd Service (Linux):** Configures and starts `/etc/systemd/system/zeron-dc-bot.service` automatically so your bot runs persistently across reboots.
 
 ---
@@ -169,6 +170,10 @@ AUTO_CREATE_SESSIONS=true
 COMMAND_PREFIX=!z
 SESSION_STORAGE_PATH=./sessions.json
 RUST_LOG=info
+
+# Embedded Activities (Required for /magpie & /terminal)
+MAGPIE_URL=https://magpie-activity.your-worker.workers.dev
+UPDATE_SECRET=your_worker_update_secret
 ```
 
 ---

@@ -85,7 +85,8 @@ cloudflare/
    # Required for Magpie: The session cookie (e.g., magpie_web_4000=<YOUR_KEY>)
    npx wrangler secret put MAGPIE_COOKIE
 
-   # Required: Shared bearer token used by VM sync scripts to push dynamic tunnel URLs
+   # Required: Shared bearer token used by VM sync scripts and the Discord bot (/magpie & /terminal) to coordinate launch modes
+   # Note: This exact token must be set in the bot's .env as UPDATE_SECRET
    npx wrangler secret put UPDATE_SECRET
 
    # Required for Terminal: Shared secret between Worker and Terminal bridge
@@ -234,3 +235,25 @@ chmod 600 ~/.magpie-tunnel.env
   ```bash
   sudo systemctl restart terminal-tunnel.service terminal-sync.service magpie-tunnel.service
   ```
+
+---
+
+## Consistency Model & Eventual Consistency Race Considerations
+
+Cloudflare Workers KV is a globally replicated, **eventually consistent** key-value storage engine.
+
+### How Activity Mode Coordination Works
+1. When a user runs `/magpie` or `/terminal`, the bot makes a synchronous `POST /__set_launch_mode` request to the Cloudflare Worker with `channel_id` and the requested `mode` (`terminal` or `magpie`), authenticated with `UPDATE_SECRET`.
+2. The Worker stores the mode under `channel_mode:<channel_id>` with a 1-hour TTL.
+3. The bot only sends Discord's `LaunchActivity` response after receiving confirmation (`200 OK`) that the mode write succeeded. If mode coordination fails (e.g. missing credentials, network failure, or Worker error), the bot aborts and surfaces an actionable ephemeral error.
+4. When Discord loads the Activity iframe, it proxies the request to `https://<worker>/?channel_id=<channel_id>`. The Worker looks up `channel_mode:<channel_id>` and dynamically routes to either Magpie or the Terminal bridge.
+
+### Eventual Consistency & Remaining Race Window
+- **Edge Colocation Propagation:** Writes to Workers KV are immediately consistent in the colocation that handled the `POST /__set_launch_mode` request. However, global propagation to other Cloudflare edge colocations takes from a few hundred milliseconds up to 60 seconds.
+- **Race Condition Window:** If Discord's proxy hits a different Cloudflare data center where the KV write has not yet replicated:
+  - The Worker will read `null` for `channel_mode:<channel_id>`.
+  - **Channel Isolation (No Global Fallback):** The Worker does **not** fall back to any global `last_launch_mode`. Channels are strictly isolated; Channel A cannot accidentally inherit Channel B's terminal or magpie session. If unpropagated, the Worker safely defaults to Magpie.
+  - **No Stale Caching:** Both the mode coordination endpoint and Activity HTML entrypoints enforce `Cache-Control: no-store` to prevent Discord's edge proxy and user browsers from caching intermediate routing states.
+- **Deterministic Zero-Race Alternatives:**
+  - **Path-based URL Mappings:** Mapping `/terminal` directly in the Discord Developer Portal provides 100% deterministic, immediate routing to the terminal bridge, completely bypassing KV propagation delays.
+  - **Query-based Overrides:** Passing `?mode=terminal` or `?mode=magpie` in the activity URL overrides KV lookup immediately.

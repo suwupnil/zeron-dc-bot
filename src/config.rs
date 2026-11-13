@@ -109,6 +109,7 @@ mod tests {
         std::env::set_var("APPLICATION_ID", "123456789012345678");
         std::env::set_var("DEFAULT_PROJECT_DIR", "/tmp/projects");
         std::env::set_var("MAGPIE_URL", "https://activity.example.com");
+        std::env::set_var("UPDATE_SECRET", "super-secret-token");
 
         let config = Config::from_env().expect("Config should parse cleanly");
         assert_eq!(config.discord_token, "test_token");
@@ -117,6 +118,10 @@ mod tests {
         assert_eq!(
             config.magpie_url,
             Some("https://activity.example.com".to_string())
+        );
+        assert_eq!(
+            config.update_secret,
+            Some("super-secret-token".to_string())
         );
         assert_eq!(config.cloudflare_model, "@cf/cloudflare/clef-flash");
     }

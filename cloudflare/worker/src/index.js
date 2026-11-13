@@ -188,42 +188,105 @@ export default {
 
     // 2c. Update active activity mode for channel (POST /__set_launch_mode)
     if (url.pathname === "/__set_launch_mode") {
-      if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
+      if (request.method !== "POST") {
+        return new Response("Method Not Allowed", {
+          status: 405,
+          headers: { "Cache-Control": "no-store" },
+        });
+      }
 
       const auth = request.headers.get("Authorization");
       if (!env.UPDATE_SECRET || auth !== `Bearer ${env.UPDATE_SECRET}`) {
-        return new Response("Unauthorized", { status: 401 });
+        return new Response("Unauthorized", {
+          status: 401,
+          headers: { "Cache-Control": "no-store" },
+        });
+      }
+
+      let payload;
+      try {
+        payload = await request.json();
+      } catch (err) {
+        return new Response(`Bad request: ${err.message}`, {
+          status: 400,
+          headers: { "Cache-Control": "no-store" },
+        });
+      }
+
+      const { channel_id, mode } = payload || {};
+
+      // Validate channel_id: Discord snowflake (string of 15-22 digits)
+      if (
+        !channel_id ||
+        (typeof channel_id !== "string" && typeof channel_id !== "number") ||
+        !/^\d{15,22}$/.test(String(channel_id).trim())
+      ) {
+        return new Response("Missing or invalid channel_id", {
+          status: 400,
+          headers: { "Cache-Control": "no-store" },
+        });
+      }
+
+      const cleanChannelId = String(channel_id).trim();
+
+      // Validate mode: strictly 'terminal' or 'magpie'
+      if (!mode || (mode !== "terminal" && mode !== "magpie")) {
+        return new Response("Invalid mode", {
+          status: 400,
+          headers: { "Cache-Control": "no-store" },
+        });
+      }
+
+      // Check mode store availability
+      const kv = env.TERMINAL_KV || env.MAGPIE_KV;
+      if (!kv) {
+        return new Response("Mode store unavailable", {
+          status: 503,
+          headers: { "Cache-Control": "no-store" },
+        });
       }
 
       try {
-        const { channel_id, mode } = await request.json();
-        if (!mode || (mode !== "terminal" && mode !== "magpie")) {
-          return new Response("Invalid mode", { status: 400 });
-        }
-
-        const kv = env.TERMINAL_KV || env.MAGPIE_KV;
-        if (kv) {
-          if (channel_id) {
-            await kv.put(`channel_mode:${channel_id}`, mode, { expirationTtl: 3600 });
-          }
-          await kv.put("last_launch_mode", mode, { expirationTtl: 3600 });
-        }
-
-        return Response.json({
-          success: true,
-          channel_id,
-          mode,
+        await kv.put(`channel_mode:${cleanChannelId}`, mode, { expirationTtl: 3600 });
+      } catch (putErr) {
+        return new Response(`Failed to persist launch mode: ${putErr.message}`, {
+          status: 500,
+          headers: { "Cache-Control": "no-store" },
         });
-      } catch (err) {
-        return new Response(`Bad request: ${err.message}`, { status: 400 });
       }
+
+      // Note: We intentionally avoid setting a global mode fallback (`last_launch_mode`).
+      // Cloudflare KV is eventually consistent. Writing a global fallback introduces a race condition
+      // where two channels concurrently launching different activities cross-contaminate.
+      // Each channel is strictly isolated by channel_id.
+
+      return Response.json(
+        {
+          success: true,
+          channel_id: cleanChannelId,
+          mode,
+        },
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "no-store",
+          },
+        }
+      );
     }
 
     // 3. Security gate: Block all direct public internet access
     if (!isDiscordRequest(request)) {
       return new Response(
         "Access Denied: Direct internet access is blocked. Launch this activity directly from Discord (/magpie or /terminal).",
-        { status: 403, headers: { "Content-Type": "text/plain" } }
+        {
+          status: 403,
+          headers: {
+            "Content-Type": "text/plain",
+            "Cache-Control": "no-store",
+          },
+        }
       );
     }
 
@@ -239,7 +302,10 @@ export default {
       if (!isVerified) {
         return Response.json(
           { error: "Unauthorized: Invalid Discord cryptographic signature (Ed25519)" },
-          { status: 401 }
+          {
+            status: 401,
+            headers: { "Cache-Control": "no-store" },
+          }
         );
       }
     }
@@ -273,11 +339,13 @@ export default {
       } else {
         const kv = env.TERMINAL_KV || env.MAGPIE_KV;
         let mode = null;
-        if (channelId && kv) {
-          mode = await kv.get(`channel_mode:${channelId}`);
-        }
-        if (!mode && kv) {
-          mode = await kv.get("last_launch_mode");
+        const cleanChannelId = channelId ? String(channelId).trim() : null;
+        if (cleanChannelId && kv) {
+          try {
+            mode = await kv.get(`channel_mode:${cleanChannelId}`);
+          } catch (_) {
+            mode = null;
+          }
         }
         if (mode === "terminal") {
           isTerminal = true;
@@ -292,7 +360,7 @@ export default {
       if (!terminalOrigin) {
         return new Response("Terminal bridge origin is not configured yet.", {
           status: 503,
-          headers: { "Content-Type": "text/plain" },
+          headers: { "Content-Type": "text/plain", "Cache-Control": "no-store" },
         });
       }
       backendOrigin = terminalOrigin;
@@ -302,7 +370,7 @@ export default {
       if (!targetOrigin) {
         return new Response("Magpie backend origin is not configured yet.", {
           status: 503,
-          headers: { "Content-Type": "text/plain" },
+          headers: { "Content-Type": "text/plain", "Cache-Control": "no-store" },
         });
       }
       backendOrigin = targetOrigin;
@@ -453,6 +521,19 @@ export default {
       respHeaders.delete("X-Frame-Options");
       respHeaders.delete("Content-Security-Policy");
 
+      // Enforce Cache-Control: no-store on Activity HTML and root entrypoints
+      const contentType = (respHeaders.get("Content-Type") || "").toLowerCase();
+      if (
+        contentType.includes("text/html") ||
+        contentType.includes("application/xhtml+xml") ||
+        forwardPath === "/" ||
+        forwardPath === "" ||
+        forwardPath === "/terminal/" ||
+        forwardPath === "/terminal"
+      ) {
+        respHeaders.set("Cache-Control", "no-store");
+      }
+
       return new Response(resp.body, {
         status: resp.status,
         statusText: resp.statusText,
@@ -461,7 +542,7 @@ export default {
     } catch (err) {
       return new Response(`Failed to reach backend: ${err.message}`, {
         status: 502,
-        headers: { "Content-Type": "text/plain" },
+        headers: { "Content-Type": "text/plain", "Cache-Control": "no-store" },
       });
     }
   },
