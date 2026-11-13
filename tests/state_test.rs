@@ -18,10 +18,23 @@ fn make_test_config(storage_path: PathBuf) -> Config {
         session_storage_path: storage_path,
         cloudflare_account_id: None,
         cloudflare_api_token: None,
+        cloudflare_refresh_token: None,
         cloudflare_model: "@cf/cloudflare/clef-flash".to_string(),
         cloudflare_ai_endpoint: None,
         magpie_url: None,
         update_secret: None,
+        media_cache_dir: PathBuf::from("./media_cache"),
+        media_max_image_bytes: 25_000_000,
+        media_max_audio_bytes: 25_000_000,
+        media_max_file_bytes: 50_000_000,
+        ffmpeg_path: "ffmpeg".to_string(),
+        stt_provider: "cloudflare".to_string(),
+        stt_model: "@cf/openai/whisper".to_string(),
+        groq_api_key: None,
+        openai_api_key: None,
+        ocr_provider: "cloudflare".to_string(),
+        ocr_model: "@cf/llava-hf/llava-1.5-7b-hf".to_string(),
+        tesseract_path: "tesseract".to_string(),
     }
 }
 

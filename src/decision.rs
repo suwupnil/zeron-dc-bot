@@ -8,6 +8,7 @@ pub struct DecisionClient {
     http: Client,
     pub account_id: Option<String>,
     pub api_token: Option<String>,
+    pub refresh_token: Option<String>,
     pub model: String,
     pub endpoint: Option<String>,
 }
@@ -23,9 +24,15 @@ impl DecisionClient {
             http: Client::new(),
             account_id,
             api_token,
+            refresh_token: None,
             model,
             endpoint,
         }
+    }
+
+    pub fn with_refresh_token(mut self, refresh_token: Option<String>) -> Self {
+        self.refresh_token = refresh_token;
+        self
     }
 
     pub fn is_configured(&self) -> bool {
@@ -39,8 +46,24 @@ impl DecisionClient {
         latest_message: &str,
         bot_name: Option<&str>,
     ) -> bool {
+        self.should_respond_with_media(messages_context, latest_message, bot_name, None)
+            .await
+    }
+
+    /// Evaluate whether the assistant should intervene and reply to the latest message,
+    /// optionally considering media summary context (e.g. "2 images, 1 voice note").
+    pub async fn should_respond_with_media(
+        &self,
+        messages_context: &[(&str, &str)],
+        latest_message: &str,
+        bot_name: Option<&str>,
+        media_summary: Option<&str>,
+    ) -> bool {
         if self.is_configured() {
-            match self.call_cloudflare(messages_context, latest_message).await {
+            match self
+                .call_cloudflare(messages_context, latest_message, media_summary)
+                .await
+            {
                 Ok(decision) => {
                     info!("Cloudflare decision model verdict: {}", decision);
                     return decision;
@@ -54,7 +77,12 @@ impl DecisionClient {
             }
         }
 
-        let verdict = Self::fallback_heuristic(messages_context, latest_message, bot_name);
+        let verdict = Self::fallback_heuristic_with_media(
+            messages_context,
+            latest_message,
+            bot_name,
+            media_summary,
+        );
         info!("Decision fallback heuristic verdict: {}", verdict);
         verdict
     }
@@ -63,6 +91,24 @@ impl DecisionClient {
         &self,
         messages_context: &[(&str, &str)],
         latest_message: &str,
+        media_summary: Option<&str>,
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        let is_clef = self.model.to_lowercase().contains("clef");
+        if is_clef {
+            self.evaluate_with_clef(messages_context, latest_message, media_summary)
+                .await
+        } else {
+            self.evaluate_with_instruct(messages_context, latest_message, media_summary)
+                .await
+        }
+    }
+
+    /// Evaluate using Cloudflare Clef decision model native API format (state + typed questions).
+    pub async fn evaluate_with_clef(
+        &self,
+        messages_context: &[(&str, &str)],
+        latest_message: &str,
+        media_summary: Option<&str>,
     ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         let url = if let Some(ref ep) = self.endpoint {
             ep.clone()
@@ -79,51 +125,66 @@ impl DecisionClient {
             formatted_context.push_str(&format!("{}: {}\n", author, text));
         }
 
-        let is_clef = self.model.to_lowercase().contains("clef");
+        // Format latest message with media summary if present (e.g. "[user sent 2 images, 1 voice note]")
+        let latest_part = match media_summary {
+            Some(media) if !media.trim().is_empty() => {
+                let m = media.trim();
+                let media_tag = if m.starts_with('[') && m.ends_with(']') {
+                    m.to_string()
+                } else if m.to_lowercase().starts_with("user sent") {
+                    format!("[{}]", m)
+                } else {
+                    format!("[user sent {}]", m)
+                };
 
-        let body = if is_clef {
-            // Clef decision model native API format (state + typed questions)
-            let state = format!(
-                "Recent channel text messages:\n{}\nLatest message:\n{}",
-                formatted_context.trim(),
-                latest_message.trim()
-            );
-
-            serde_json::json!({
-                "state": state,
-                "questions": {
-                    "should_respond": {
-                        "type": "noul",
-                        "instructions": DECISION_INSTRUCTIONS
-                    }
+                let trimmed_msg = latest_message.trim();
+                if trimmed_msg.is_empty() {
+                    media_tag
+                } else {
+                    format!("{} {}", trimmed_msg, media_tag)
                 }
-            })
-        } else {
-            // Standard instruct / chat completion format (e.g. Llama-3.1, Gemma)
-            let user_prompt = format!(
-                "Recent channel text messages:\n{}\n\nLatest message: \"{}\"\nShould the AI bot respond? (YES/NO):",
-                formatted_context.trim(),
-                latest_message.trim()
-            );
-
-            serde_json::json!({
-                "messages": [
-                    { "role": "system", "content": DECISION_INSTRUCTIONS },
-                    { "role": "user", "content": user_prompt }
-                ],
-                "max_tokens": 10
-            })
+            }
+            _ => latest_message.trim().to_string(),
         };
+
+        let state = format!(
+            "Recent channel text messages:\n{}\nLatest message:\n{}",
+            formatted_context.trim(),
+            latest_part
+        );
+
+        let body = serde_json::json!({
+            "state": state,
+            "questions": {
+                "should_respond": {
+                    "type": "noul",
+                    "instructions": DECISION_INSTRUCTIONS
+                }
+            }
+        });
 
         let mut req = self.http.post(&url).json(&body);
         if let Some(ref token) = self.api_token {
             req = req.bearer_auth(token);
         }
 
-        let res = req
+        let mut res = req
             .timeout(std::time::Duration::from_secs(5))
             .send()
             .await?;
+        if res.status() == reqwest::StatusCode::UNAUTHORIZED {
+            if let Some(ref rt) = self.refresh_token {
+                warn!("Clef received 401 Unauthorized, attempting OAuth token refresh...");
+                if let Some(new_token) = crate::media::ocr::refresh_cloudflare_oauth_token(rt, &self.http).await {
+                    res = self.http.post(&url)
+                        .bearer_auth(&new_token)
+                        .json(&body)
+                        .timeout(std::time::Duration::from_secs(5))
+                        .send()
+                        .await?;
+                }
+            }
+        }
         if !res.status().is_success() {
             let status = res.status();
             let text = res.text().await.unwrap_or_default();
@@ -162,6 +223,104 @@ impl DecisionClient {
         Ok(upper.starts_with("YES"))
     }
 
+    /// Evaluate using standard instruct / chat completion format (e.g. Llama-3.1, Gemma).
+    pub async fn evaluate_with_instruct(
+        &self,
+        messages_context: &[(&str, &str)],
+        latest_message: &str,
+        media_summary: Option<&str>,
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        let url = if let Some(ref ep) = self.endpoint {
+            ep.clone()
+        } else {
+            let acct = self.account_id.as_deref().unwrap_or_default();
+            format!(
+                "https://api.cloudflare.com/client/v4/accounts/{}/ai/run/{}",
+                acct, self.model
+            )
+        };
+
+        let mut formatted_context = String::new();
+        for (author, text) in messages_context {
+            formatted_context.push_str(&format!("{}: {}\n", author, text));
+        }
+
+        let latest_part = match media_summary {
+            Some(media) if !media.trim().is_empty() => {
+                let m = media.trim();
+                let media_tag = if m.starts_with('[') && m.ends_with(']') {
+                    m.to_string()
+                } else if m.to_lowercase().starts_with("user sent") {
+                    format!("[{}]", m)
+                } else {
+                    format!("[user sent {}]", m)
+                };
+
+                let trimmed_msg = latest_message.trim();
+                if trimmed_msg.is_empty() {
+                    media_tag
+                } else {
+                    format!("{} {}", trimmed_msg, media_tag)
+                }
+            }
+            _ => latest_message.trim().to_string(),
+        };
+
+        let user_prompt = format!(
+            "Recent channel text messages:\n{}\n\nLatest message: \"{}\"\nShould the AI bot respond? (YES/NO):",
+            formatted_context.trim(),
+            latest_part
+        );
+
+        let body = serde_json::json!({
+            "messages": [
+                { "role": "system", "content": DECISION_INSTRUCTIONS },
+                { "role": "user", "content": user_prompt }
+            ],
+            "max_tokens": 10
+        });
+
+        let mut req = self.http.post(&url).json(&body);
+        if let Some(ref token) = self.api_token {
+            req = req.bearer_auth(token);
+        }
+
+        let mut res = req
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await?;
+        if res.status() == reqwest::StatusCode::UNAUTHORIZED {
+            if let Some(ref rt) = self.refresh_token {
+                warn!("Clef received 401 Unauthorized, attempting OAuth token refresh...");
+                if let Some(new_token) = crate::media::ocr::refresh_cloudflare_oauth_token(rt, &self.http).await {
+                    res = self.http.post(&url)
+                        .bearer_auth(&new_token)
+                        .json(&body)
+                        .timeout(std::time::Duration::from_secs(5))
+                        .send()
+                        .await?;
+                }
+            }
+        }
+        if !res.status().is_success() {
+            let status = res.status();
+            let text = res.text().await.unwrap_or_default();
+            return Err(format!("Cloudflare API error status {}: {}", status, text).into());
+        }
+
+        let json: serde_json::Value = res.json().await?;
+        let response_text = json
+            .pointer("/result/response")
+            .and_then(|v| v.as_str())
+            .or_else(|| json.get("response").and_then(|v| v.as_str()))
+            .unwrap_or_default()
+            .trim();
+
+        debug!("Cloudflare decision raw response: {}", response_text);
+        let upper = response_text.to_uppercase();
+        Ok(upper.starts_with("YES"))
+    }
+
     /// Smart fallback heuristic when Cloudflare Workers AI credentials are not configured.
     /// Distinguishes between multi-user conversation and messages intended for the bot.
     pub fn fallback_heuristic(
@@ -169,7 +328,32 @@ impl DecisionClient {
         latest_message: &str,
         bot_name: Option<&str>,
     ) -> bool {
+        Self::fallback_heuristic_with_media(messages_context, latest_message, bot_name, None)
+    }
+
+    /// Smart fallback heuristic with media context support.
+    /// If `media_summary` is non-empty and user text is empty or brief, biases decision to true
+    /// (the user sent media into the channel).
+    pub fn fallback_heuristic_with_media(
+        messages_context: &[(&str, &str)],
+        latest_message: &str,
+        bot_name: Option<&str>,
+        media_summary: Option<&str>,
+    ) -> bool {
         let text = latest_message.trim();
+
+        // 0. Media context bias: if media was uploaded and text is empty or brief,
+        // bias decision to true (user sent media to the channel for the bot).
+        if let Some(media) = media_summary {
+            let media_trim = media.trim();
+            if !media_trim.is_empty() {
+                let word_count = text.split_whitespace().count();
+                if text.is_empty() || text.len() <= 60 || word_count <= 8 {
+                    return true;
+                }
+            }
+        }
+
         if text.is_empty() {
             return false;
         }
@@ -361,6 +545,59 @@ mod tests {
             &peer_context,
             "what did you say?",
             Some("custombot")
+        ));
+    }
+
+    #[test]
+    fn test_fallback_heuristic_with_media() {
+        // Empty text with media -> biased to true
+        assert!(DecisionClient::fallback_heuristic_with_media(
+            &[],
+            "",
+            None,
+            Some("1 image")
+        ));
+        assert!(DecisionClient::fallback_heuristic_with_media(
+            &[],
+            "   ",
+            None,
+            Some("2 images, 1 voice note")
+        ));
+
+        // Brief text with media -> biased to true
+        assert!(DecisionClient::fallback_heuristic_with_media(
+            &[],
+            "what is this?",
+            None,
+            Some("1 image")
+        ));
+        assert!(DecisionClient::fallback_heuristic_with_media(
+            &[],
+            "check this out",
+            None,
+            Some("1 image")
+        ));
+
+        // Empty text with NO media -> false
+        assert!(!DecisionClient::fallback_heuristic_with_media(
+            &[],
+            "",
+            None,
+            None
+        ));
+        assert!(!DecisionClient::fallback_heuristic_with_media(
+            &[],
+            "",
+            None,
+            Some("")
+        ));
+
+        // Casual long chatter with NO media -> false
+        assert!(!DecisionClient::fallback_heuristic_with_media(
+            &[],
+            "hey guys are we having lunch together at the cafeteria today?",
+            None,
+            None
         ));
     }
 }

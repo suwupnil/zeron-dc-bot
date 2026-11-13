@@ -36,13 +36,60 @@ fn extract_text_only(raw_content: &str) -> String {
     words.join(" ")
 }
 
+fn format_media_summary(attachments: &[crate::media::MediaAttachment]) -> Option<String> {
+    if attachments.is_empty() {
+        return None;
+    }
+    let mut images = 0;
+    let mut audio = 0;
+    let mut files = 0;
+    for att in attachments {
+        match att {
+            crate::media::MediaAttachment::Image { .. } => images += 1,
+            crate::media::MediaAttachment::Audio { .. } => audio += 1,
+            crate::media::MediaAttachment::File { .. } => files += 1,
+        }
+    }
+    let mut parts = Vec::new();
+    if images > 0 {
+        parts.push(format!(
+            "{} {}",
+            images,
+            if images == 1 { "image" } else { "images" }
+        ));
+    }
+    if audio > 0 {
+        parts.push(format!(
+            "{} {}",
+            audio,
+            if audio == 1 { "voice note" } else { "voice notes" }
+        ));
+    }
+    if files > 0 {
+        parts.push(format!(
+            "{} {}",
+            files,
+            if files == 1 { "file" } else { "files" }
+        ));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(", "))
+    }
+}
+
 pub struct Handler {
     pub state: AppState,
+    pub http_client: reqwest::Client,
 }
 
 impl Handler {
     pub fn new(state: AppState) -> Self {
-        Self { state }
+        Self {
+            state,
+            http_client: reqwest::Client::new(),
+        }
     }
 }
 
@@ -292,7 +339,8 @@ impl EventHandler for Handler {
         }
 
         let content = msg.content.trim();
-        if content.is_empty() {
+        let has_attachments = !msg.attachments.is_empty() || !msg.sticker_items.is_empty();
+        if content.is_empty() && !has_attachments {
             return;
         }
 
@@ -318,6 +366,40 @@ impl EventHandler for Handler {
 
         let is_explicit = is_mentioned || is_reply_to_bot;
         let channel_id = msg.channel_id.get();
+
+        // Check for video attachments: videos are explicitly out of scope.
+        if crate::media::has_video_attachments(&msg) {
+            warn!(
+                "Message from {} contains video attachments which are out of scope",
+                msg.author.name
+            );
+            if is_explicit {
+                let _ = msg
+                    .reply(
+                        &ctx.http,
+                        "⚠️ Video inputs are currently out of scope. Please send images, voice notes, or documents.",
+                    )
+                    .await;
+            }
+            return;
+        }
+
+        // Extract attachments and build media summary
+        let attachments = match crate::media::extract_attachments(
+            &msg,
+            &self.state.config,
+            &self.http_client,
+        )
+        .await
+        {
+            Ok(atts) => atts,
+            Err(e) => {
+                warn!("Failed to extract attachments from message {}: {}", msg.id, e);
+                Vec::new()
+            }
+        };
+
+        let media_summary = format_media_summary(&attachments);
 
         // Check channel type
         let channel_info = msg.channel_id.to_channel(&ctx.http).await.ok();
@@ -398,7 +480,12 @@ impl EventHandler for Handler {
             let should_respond = self
                 .state
                 .decision
-                .should_respond(&context_refs, &text_content, Some(&bot_name))
+                .should_respond_with_media(
+                    &context_refs,
+                    &text_content,
+                    Some(&bot_name),
+                    media_summary.as_deref(),
+                )
                 .await;
 
             if !should_respond {
@@ -429,7 +516,7 @@ impl EventHandler for Handler {
         };
 
         let clean_text_prompt = extract_text_only(&clean_prompt);
-        if clean_text_prompt.is_empty() {
+        if clean_text_prompt.is_empty() && attachments.is_empty() {
             return;
         }
 
@@ -465,23 +552,33 @@ impl EventHandler for Handler {
         let typing = msg.channel_id.start_typing(&ctx.http);
 
         info!(
-            "Routing message from {} to Zeron session {} (origin: {:?}, kind: {})",
-            msg.author.name, session.chat_id, session.origin, session.kind
+            "Routing message from {} to Zeron session {} (origin: {:?}, kind: {}, attachments: {})",
+            msg.author.name,
+            session.chat_id,
+            session.origin,
+            session.kind,
+            attachments.len()
+        );
+
+        let assembled_prompt = crate::media::prompt::build_zeron_prompt(
+            &clean_text_prompt,
+            &attachments,
+            &msg.author.name,
         );
 
         let formatted_user_msg = if let Some(handoff) = handoff_context_opt {
             // If the user recently switched models/harnesses, inject the handoff context
             format!(
-                "{}\n\n[Current User Message]:\n{}: {}",
-                handoff, msg.author.name, clean_text_prompt
+                "{}\n\n[Current User Message]:\n{}",
+                handoff, assembled_prompt
             )
         } else if is_first_tag_turn {
             format!(
-                "[System instruction: Be conversational, natural and human-like. Do not use rigid formatting, bulleted lists, headers, or robotic grammar. Look like human generated, and send concise messages only unless asked otherwise.]\n\n{}: {}",
-                msg.author.name, clean_text_prompt
+                "[System instruction: Be conversational, natural and human-like. Do not use rigid formatting, bulleted lists, headers, or robotic grammar. Look like human generated, and send concise messages only unless asked otherwise.]\n\n{}",
+                assembled_prompt
             )
         } else {
-            format!("{}: {}", msg.author.name, clean_text_prompt)
+            assembled_prompt
         };
 
         // Send to Zeron MCP
@@ -613,5 +710,59 @@ impl EventHandler for Handler {
                 let _ = msg.reply(&ctx.http, err_msg).await;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_format_media_summary() {
+        assert_eq!(format_media_summary(&[]), None);
+
+        let one_img = vec![crate::media::MediaAttachment::Image {
+            path: PathBuf::from("img.png"),
+            name: "img.png".to_string(),
+            ocr_text: None,
+        }];
+        assert_eq!(format_media_summary(&one_img), Some("1 image".to_string()));
+
+        let two_imgs_one_audio = vec![
+            crate::media::MediaAttachment::Image {
+                path: PathBuf::from("img1.png"),
+                name: "img1.png".to_string(),
+                ocr_text: None,
+            },
+            crate::media::MediaAttachment::Image {
+                path: PathBuf::from("img2.png"),
+                name: "img2.png".to_string(),
+                ocr_text: None,
+            },
+            crate::media::MediaAttachment::Audio {
+                path: PathBuf::from("voice.wav"),
+                name: "voice.wav".to_string(),
+                transcript: "hello".to_string(),
+            },
+        ];
+        assert_eq!(
+            format_media_summary(&two_imgs_one_audio),
+            Some("2 images, 1 voice note".to_string())
+        );
+
+        let files = vec![
+            crate::media::MediaAttachment::File {
+                path: PathBuf::from("doc.pdf"),
+                name: "doc.pdf".to_string(),
+                mime: "application/pdf".to_string(),
+            },
+            crate::media::MediaAttachment::File {
+                path: PathBuf::from("data.csv"),
+                name: "data.csv".to_string(),
+                mime: "text/csv".to_string(),
+            },
+        ];
+        assert_eq!(format_media_summary(&files), Some("2 files".to_string()));
     }
 }

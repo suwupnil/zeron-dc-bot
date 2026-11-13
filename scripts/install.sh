@@ -352,6 +352,83 @@ if [ "$RECONFIGURE" = true ]; then
         printf "%bClef skipped. The bot will automatically use the built-in conversational heuristic fallback.%b\n" "$CYAN" "$RESET"
     fi
 
+    printf "\n%b--- Multimodal Media Processing (Speech-to-Text & OCR) ---%b\n" "$BOLD" "$RESET"
+    printf "zeron-dc-bot supports incoming Discord images, voice notes, stickers, and documents.\n"
+    printf "Voice notes are transcoded with ffmpeg and transcribed with Cloudflare Whisper or OpenAI Whisper.\n"
+    printf "Images can be processed with Cloudflare vision models or local Tesseract OCR.\n\n"
+    prompt_read "Do you want to customize Media / STT / OCR settings? [y/N]: " SETUP_MEDIA "n"
+
+    MEDIA_CACHE_DIR="./media_cache"
+    MEDIA_MAX_IMAGE_BYTES="25000000"
+    MEDIA_MAX_AUDIO_BYTES="25000000"
+    MEDIA_MAX_FILE_BYTES="50000000"
+    FFMPEG_PATH="ffmpeg"
+    STT_PROVIDER="groq"
+    STT_MODEL="whisper-large-v3-turbo"
+    GROQ_API_KEY=""
+    OPENAI_API_KEY=""
+    OCR_PROVIDER="cloudflare"
+    OCR_MODEL="@cf/llava-hf/llava-1.5-7b-hf"
+    TESSERACT_PATH="tesseract"
+
+    if [[ "$SETUP_MEDIA" =~ ^[Yy]$ ]]; then
+        prompt_read "  • Media Cache Directory [./media_cache]: " MEDIA_CACHE_DIR "./media_cache"
+        prompt_read "  • Speech-to-Text Provider (groq, cloudflare, openai, none) [groq]: " STT_PROVIDER "groq"
+        case "$STT_PROVIDER" in
+            groq)
+                prompt_read "  • STT Model [whisper-large-v3-turbo]: " STT_MODEL "whisper-large-v3-turbo"
+                prompt_secret "  • Groq API Key (GROQ_API_KEY): " GROQ_API_KEY
+                ;;
+            openai)
+                prompt_read "  • STT Model [whisper-1]: " STT_MODEL "whisper-1"
+                prompt_secret "  • OpenAI API Key (OPENAI_API_KEY): " OPENAI_API_KEY
+                ;;
+            cloudflare)
+                prompt_read "  • Cloudflare STT Model [@cf/openai/whisper]: " STT_MODEL "@cf/openai/whisper"
+                ;;
+            *)
+                STT_PROVIDER="none"
+                ;;
+        esac
+
+        prompt_read "  • OCR / Vision Provider (cloudflare, tesseract, none) [cloudflare]: " OCR_PROVIDER "cloudflare"
+        case "$OCR_PROVIDER" in
+            tesseract)
+                prompt_read "  • Path to tesseract binary [tesseract]: " TESSERACT_PATH "tesseract"
+                if ! command -v "$TESSERACT_PATH" &>/dev/null; then
+                    printf "  %bNotice: '%s' not found. Ensure tesseract is installed on the host for local OCR.%b\n" "$YELLOW" "$TESSERACT_PATH" "$RESET"
+                fi
+                ;;
+            cloudflare)
+                prompt_read "  • Cloudflare OCR Model [@cf/llava-hf/llava-1.5-7b-hf]: " OCR_MODEL "@cf/llava-hf/llava-1.5-7b-hf"
+                ;;
+            *)
+                OCR_PROVIDER="none"
+                ;;
+        esac
+
+        prompt_read "  • Path to ffmpeg binary [ffmpeg]: " FFMPEG_PATH "ffmpeg"
+        if ! command -v "$FFMPEG_PATH" &>/dev/null; then
+            printf "  %bNotice: ffmpeg not found at '%s'. Required to transcode Discord voice notes to WAV for STT.%b\n" "$YELLOW" "$FFMPEG_PATH" "$RESET"
+        fi
+
+        printf "%b✔ Multimodal media settings collected.%b\n" "$GREEN" "$RESET"
+    else
+        if ! command -v "$FFMPEG_PATH" &>/dev/null; then
+            printf "%bTip: 'ffmpeg' is recommended for Discord voice note transcription.%b\n" "$YELLOW" "$RESET"
+        fi
+        printf "%bUsing default media settings (STT: Cloudflare Whisper, OCR: Cloudflare vision, ffmpeg: %s).%b\n" "$CYAN" "$FFMPEG_PATH" "$RESET"
+    fi
+
+    # Ensure media cache directory exists
+    if [[ "$MEDIA_CACHE_DIR" = /* ]]; then
+        mkdir -p "$MEDIA_CACHE_DIR" 2>/dev/null || true
+        chown "$TARGET_USER:$TARGET_USER" "$MEDIA_CACHE_DIR" 2>/dev/null || true
+    else
+        mkdir -p "${INSTALL_DIR}/${MEDIA_CACHE_DIR}" 2>/dev/null || true
+        chown "$TARGET_USER:$TARGET_USER" "${INSTALL_DIR}/${MEDIA_CACHE_DIR}" 2>/dev/null || true
+    fi
+
     printf "\n%b--- Discord Embedded Activities (/magpie & /terminal) ---%b\n" "$BOLD" "$RESET"
     printf "To enable embedded Magpie Web UI and VM Terminal activities in Discord,\n"
     printf "the bot requires your Cloudflare Worker URL and the shared UPDATE_SECRET.\n"
@@ -445,6 +522,36 @@ EOF
 # CLOUDFLARE_AI_ENDPOINT=
 EOF
     fi
+
+    cat << EOF >> "$ENV_FILE"
+
+# Multimodal & Media Processing Configuration
+MEDIA_CACHE_DIR=${MEDIA_CACHE_DIR}
+MEDIA_MAX_IMAGE_BYTES=${MEDIA_MAX_IMAGE_BYTES}
+MEDIA_MAX_AUDIO_BYTES=${MEDIA_MAX_AUDIO_BYTES}
+MEDIA_MAX_FILE_BYTES=${MEDIA_MAX_FILE_BYTES}
+FFMPEG_PATH=${FFMPEG_PATH}
+STT_PROVIDER=${STT_PROVIDER}
+STT_MODEL=${STT_MODEL}
+EOF
+
+    if [ -n "$GROQ_API_KEY" ]; then
+        echo "GROQ_API_KEY=${GROQ_API_KEY}" >> "$ENV_FILE"
+    else
+        echo "GROQ_API_KEY=" >> "$ENV_FILE"
+    fi
+
+    if [ -n "$OPENAI_API_KEY" ]; then
+        echo "OPENAI_API_KEY=${OPENAI_API_KEY}" >> "$ENV_FILE"
+    else
+        echo "OPENAI_API_KEY=" >> "$ENV_FILE"
+    fi
+
+    cat << EOF >> "$ENV_FILE"
+OCR_PROVIDER=${OCR_PROVIDER}
+OCR_MODEL=${OCR_MODEL}
+TESSERACT_PATH=${TESSERACT_PATH}
+EOF
 
     if [ -n "$MAGPIE_URL" ] && [ -n "$UPDATE_SECRET" ]; then
         cat << EOF >> "$ENV_FILE"

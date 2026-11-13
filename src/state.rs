@@ -88,7 +88,8 @@ impl AppState {
             config.cloudflare_api_token.clone(),
             config.cloudflare_model.clone(),
             config.cloudflare_ai_endpoint.clone(),
-        );
+        )
+        .with_refresh_token(config.cloudflare_refresh_token.clone());
         Self {
             config,
             zeron,
