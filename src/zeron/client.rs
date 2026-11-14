@@ -16,6 +16,8 @@ pub struct ZeronClientInner {
     pending_requests: Arc<Mutex<HashMap<u64, oneshot::Sender<BotResult<JsonRpcResponse>>>>>,
     next_id: AtomicU64,
     _child: Mutex<Child>,
+    harnesses_cache: Mutex<Option<(std::time::Instant, Vec<HarnessInfo>)>>,
+    models_cache: Mutex<HashMap<String, (std::time::Instant, Vec<ModelInfo>)>>,
 }
 
 #[derive(Clone)]
@@ -123,6 +125,8 @@ impl ZeronClient {
             pending_requests,
             next_id: AtomicU64::new(1),
             _child: Mutex::new(child),
+            harnesses_cache: Mutex::new(None),
+            models_cache: Mutex::new(HashMap::new()),
         });
 
         // Initialize handshake
@@ -421,8 +425,18 @@ impl ZeronClient {
         Ok(())
     }
 
-    /// Query available harnesses
+    /// Query available harnesses (cached for 30s to keep autocomplete under Discord's 3s deadline)
     pub async fn list_harnesses(&self) -> BotResult<Vec<HarnessInfo>> {
+        let inner = self.get_inner().await?;
+        {
+            let cache = inner.harnesses_cache.lock().await;
+            if let Some((cached_at, ref harnesses)) = *cache {
+                if cached_at.elapsed() < Duration::from_secs(30) {
+                    return Ok(harnesses.clone());
+                }
+            }
+        }
+
         let res = self
             .call_tool("list_harnesses", serde_json::json!({}))
             .await?;
@@ -431,11 +445,27 @@ impl ZeronClient {
             .cloned()
             .unwrap_or(serde_json::Value::Array(vec![]));
         let harnesses: Vec<HarnessInfo> = serde_json::from_value(harnesses_val)?;
+
+        {
+            let mut cache = inner.harnesses_cache.lock().await;
+            *cache = Some((std::time::Instant::now(), harnesses.clone()));
+        }
+
         Ok(harnesses)
     }
 
-    /// Query available models for a given harness
+    /// Query available models for a given harness (cached for 30s)
     pub async fn list_models(&self, harness: &str) -> BotResult<Vec<ModelInfo>> {
+        let inner = self.get_inner().await?;
+        {
+            let cache = inner.models_cache.lock().await;
+            if let Some((cached_at, ref models)) = cache.get(harness) {
+                if cached_at.elapsed() < Duration::from_secs(30) {
+                    return Ok(models.clone());
+                }
+            }
+        }
+
         let res = self
             .call_tool("list_models", serde_json::json!({ "harness": harness }))
             .await?;
@@ -444,6 +474,15 @@ impl ZeronClient {
             .cloned()
             .unwrap_or(serde_json::Value::Array(vec![]));
         let models: Vec<ModelInfo> = serde_json::from_value(models_val)?;
+
+        {
+            let mut cache = inner.models_cache.lock().await;
+            cache.insert(
+                harness.to_string(),
+                (std::time::Instant::now(), models.clone()),
+            );
+        }
+
         Ok(models)
     }
 

@@ -3,7 +3,7 @@ use crate::state::AppState;
 use serenity::all::{
     AutocompleteChoice, CommandDataOptionValue, CommandInteraction, CommandOptionType, Context,
     CreateAutocompleteResponse, CreateCommand, CreateCommandOption, CreateInteractionResponse,
-    CreateInteractionResponseMessage,
+    EditInteractionResponse,
 };
 
 pub fn register() -> CreateCommand {
@@ -39,6 +39,9 @@ pub fn register() -> CreateCommand {
 }
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) -> BotResult<()> {
+    // Immediately defer ephemeral response
+    command.defer_ephemeral(&ctx.http).await?;
+
     let harness_option = command
         .data
         .options
@@ -67,15 +70,11 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
     match existing {
         Some(s) if !s.is_closed => {}
         _ => {
-            let resp = CreateInteractionResponseMessage::new()
-                .content(
-                    "❌ No active Zeron session found for this channel.\n\
-                     Use `/spawn <directory>` to spawn a project session or tag the bot to start a conversation.",
-                )
-                .ephemeral(true);
-            command
-                .create_response(&ctx.http, CreateInteractionResponse::Message(resp))
-                .await?;
+            let edit = EditInteractionResponse::new().content(
+                "❌ No active Zeron session found for this channel.\n\
+                 Use `/spawn <directory>` to spawn a project session or tag the bot to start a conversation.",
+            );
+            command.edit_response(&ctx.http, edit).await?;
             return Ok(());
         }
     };
@@ -115,17 +114,13 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
 
     // Requirement 1: on model change, don't send the "🤖 Model Updated" message. Only update the topic.
     // Acknowledge interaction silently (ephemeral)
-    let resp = CreateInteractionResponseMessage::new()
-        .content(format!(
-            "✅ Channel topic updated to `{}/{}.{}`",
-            harness_name,
-            resolved_model,
-            resolved_effort.as_deref().unwrap_or("default")
-        ))
-        .ephemeral(true);
-    command
-        .create_response(&ctx.http, CreateInteractionResponse::Message(resp))
-        .await?;
+    let edit = EditInteractionResponse::new().content(format!(
+        "✅ Channel topic updated to `{}/{}.{}`",
+        harness_name,
+        resolved_model,
+        resolved_effort.as_deref().unwrap_or("default")
+    ));
+    command.edit_response(&ctx.http, edit).await?;
 
     Ok(())
 }

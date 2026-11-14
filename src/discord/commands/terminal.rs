@@ -2,7 +2,7 @@ use crate::error::BotResult;
 use crate::state::AppState;
 use serenity::all::{
     CommandInteraction, Context, CreateCommand, CreateEmbed, CreateInteractionResponse,
-    CreateInteractionResponseMessage,
+    CreateInteractionResponseFollowup, CreateInteractionResponseMessage,
 };
 use tracing::{info, warn};
 
@@ -74,7 +74,7 @@ pub async fn notify_worker_launch_mode_client(
         "mode": mode,
     });
 
-    let max_attempts = 3;
+    let max_attempts = 2;
     let mut last_network_err = None;
 
     for attempt in 1..=max_attempts {
@@ -82,7 +82,7 @@ pub async fn notify_worker_launch_mode_client(
             .post(&endpoint)
             .header("Authorization", format!("Bearer {}", secret))
             .json(&body)
-            .timeout(std::time::Duration::from_millis(2500));
+            .timeout(std::time::Duration::from_millis(1200));
 
         match req.send().await {
             Ok(resp) => {
@@ -128,7 +128,7 @@ pub async fn notify_worker_launch_mode_client(
                     break;
                 }
                 if attempt < max_attempts {
-                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
             }
         }
@@ -208,12 +208,18 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
                 .color(0x2b2d31);
 
             let resp = CreateInteractionResponseMessage::new()
-                .embed(embed)
+                .embed(embed.clone())
                 .ephemeral(true);
 
-            let _ = command
+            if let Err(_msg_err) = command
                 .create_response(&ctx.http, CreateInteractionResponse::Message(resp))
-                .await;
+                .await
+            {
+                let followup = CreateInteractionResponseFollowup::new()
+                    .embed(embed)
+                    .ephemeral(true);
+                let _ = command.create_followup(&ctx.http, followup).await;
+            }
 
             Ok(())
         }

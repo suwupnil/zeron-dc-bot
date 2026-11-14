@@ -3,7 +3,7 @@ use crate::state::AppState;
 use serenity::all::{
     AutocompleteChoice, CommandDataOptionValue, CommandInteraction, CommandOptionType, Context,
     CreateAutocompleteResponse, CreateCommand, CreateCommandOption, CreateInteractionResponse,
-    CreateInteractionResponseMessage,
+    EditInteractionResponse,
 };
 
 pub fn register() -> CreateCommand {
@@ -17,6 +17,9 @@ pub fn register() -> CreateCommand {
 }
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) -> BotResult<()> {
+    // Immediately defer ephemeral response
+    command.defer_ephemeral(&ctx.http).await?;
+
     let level_option = command
         .data
         .options
@@ -27,12 +30,9 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
     let level_name = match level_option {
         Some(lvl) => lvl.trim(),
         None => {
-            let resp = CreateInteractionResponseMessage::new()
-                .content("❌ Missing required argument: `level`")
-                .ephemeral(true);
-            command
-                .create_response(&ctx.http, CreateInteractionResponse::Message(resp))
-                .await?;
+            let edit = EditInteractionResponse::new()
+                .content("❌ Missing required argument: `level`");
+            command.edit_response(&ctx.http, edit).await?;
             return Ok(());
         }
     };
@@ -43,15 +43,11 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
     let session = match existing {
         Some(s) if !s.is_closed => state.set_effort(channel_id, level_name).await?,
         _ => {
-            let resp = CreateInteractionResponseMessage::new()
-                .content(
-                    "❌ No active Zeron session found for this channel.\n\
-                     Use `/spawn <directory>` to spawn a project session or tag the bot to start a conversation.",
-                )
-                .ephemeral(true);
-            command
-                .create_response(&ctx.http, CreateInteractionResponse::Message(resp))
-                .await?;
+            let edit = EditInteractionResponse::new().content(
+                "❌ No active Zeron session found for this channel.\n\
+                 Use `/spawn <directory>` to spawn a project session or tag the bot to start a conversation.",
+            );
+            command.edit_response(&ctx.http, edit).await?;
             return Ok(());
         }
     };
@@ -59,18 +55,14 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
     // Update topic to reflect <harness>/<model>.<effort>
     let _ = crate::discord::topic::update_channel_topic(ctx, channel_id, state).await;
 
-    let resp = CreateInteractionResponseMessage::new()
-        .content(format!(
-            "Effort level set to `{}`. Topic updated to `{}/{}.{}`",
-            level_name,
-            session.harness,
-            session.model.as_deref().unwrap_or("default"),
-            level_name
-        ))
-        .ephemeral(true);
-    command
-        .create_response(&ctx.http, CreateInteractionResponse::Message(resp))
-        .await?;
+    let edit = EditInteractionResponse::new().content(format!(
+        "Effort level set to `{}`. Topic updated to `{}/{}.{}`",
+        level_name,
+        session.harness,
+        session.model.as_deref().unwrap_or("default"),
+        level_name
+    ));
+    command.edit_response(&ctx.http, edit).await?;
 
     Ok(())
 }

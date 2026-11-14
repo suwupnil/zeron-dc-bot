@@ -1,14 +1,13 @@
 use crate::error::BotResult;
-use serenity::all::{
-    CommandInteraction, Context, CreateCommand, CreateInteractionResponse,
-    CreateInteractionResponseMessage,
-};
+use serenity::all::{CommandInteraction, Context, CreateCommand, EditInteractionResponse};
 
 pub fn register() -> CreateCommand {
     CreateCommand::new("help").description("Learn how to use the Zeron Discord Bridge Bot")
 }
 
 pub async fn run(ctx: &Context, command: &CommandInteraction) -> BotResult<()> {
+    command.defer_ephemeral(&ctx.http).await?;
+
     let help_text = "\
 ### 🚀 Zeron Discord Bridge Bot
 
@@ -46,12 +45,8 @@ Connect your Discord channels and threads to your local **Zeron** coding agents.
 - Explicitly tagging `@bot` or replying to the bot always guarantees an immediate response.
 ";
 
-    let resp = CreateInteractionResponseMessage::new()
-        .content(help_text)
-        .ephemeral(true);
-    command
-        .create_response(&ctx.http, CreateInteractionResponse::Message(resp))
-        .await?;
+    let edit = EditInteractionResponse::new().content(help_text);
+    command.edit_response(&ctx.http, edit).await?;
 
     Ok(())
 }

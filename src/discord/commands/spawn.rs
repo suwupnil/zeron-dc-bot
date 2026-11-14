@@ -4,7 +4,7 @@ use crate::state::AppState;
 use serenity::all::{
     AutocompleteChoice, CommandDataOptionValue, CommandInteraction, CommandOptionType, Context,
     CreateAutocompleteResponse, CreateCommand, CreateCommandOption, CreateInteractionResponse,
-    CreateInteractionResponseMessage,
+    EditInteractionResponse,
 };
 use std::path::Path;
 
@@ -50,6 +50,9 @@ pub fn register() -> CreateCommand {
 }
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) -> BotResult<()> {
+    // Immediately defer ephemeral response to avoid Discord 3s timeout
+    command.defer_ephemeral(&ctx.http).await?;
+
     let dir_option = command
         .data
         .options
@@ -60,11 +63,9 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
     let dir_input = match dir_option {
         Some(d) => d.trim(),
         None => {
-            let resp = CreateInteractionResponseMessage::new()
+            let edit = EditInteractionResponse::new()
                 .content("❌ Missing required argument: `directory`");
-            command
-                .create_response(&ctx.http, CreateInteractionResponse::Message(resp))
-                .await?;
+            command.edit_response(&ctx.http, edit).await?;
             return Ok(());
         }
     };
@@ -75,14 +76,12 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
     // If directory does not exist, create it
     if !path.exists() {
         if let Err(e) = tokio::fs::create_dir_all(&path).await {
-            let resp = CreateInteractionResponseMessage::new().content(format!(
+            let edit = EditInteractionResponse::new().content(format!(
                 "❌ Failed to create directory `{}`: {}",
                 path.display(),
                 e
             ));
-            command
-                .create_response(&ctx.http, CreateInteractionResponse::Message(resp))
-                .await?;
+            command.edit_response(&ctx.http, edit).await?;
             return Ok(());
         }
     }
@@ -157,12 +156,8 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
         session.effort.as_deref().unwrap_or("default")
     );
 
-    let resp = CreateInteractionResponseMessage::new()
-        .content(resp_text)
-        .ephemeral(true);
-    command
-        .create_response(&ctx.http, CreateInteractionResponse::Message(resp))
-        .await?;
+    let edit = EditInteractionResponse::new().content(resp_text);
+    command.edit_response(&ctx.http, edit).await?;
 
     Ok(())
 }

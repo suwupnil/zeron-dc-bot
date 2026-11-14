@@ -32,6 +32,20 @@ async fn test_live_zeron_mcp_handshake_and_tools() {
     let has_codex = harnesses.iter().any(|h| h.id == "codex");
     assert!(has_codex, "Expected 'codex' harness to be present");
 
+    // 2b. Query harnesses again (verifying fast cache hit)
+    let t0 = std::time::Instant::now();
+    let harnesses_cached = client
+        .list_harnesses()
+        .await
+        .expect("Failed to list cached harnesses");
+    let cached_duration = t0.elapsed();
+    assert_eq!(harnesses.len(), harnesses_cached.len());
+    assert!(
+        cached_duration < std::time::Duration::from_millis(10),
+        "Cached harnesses query should be near-instant (<10ms), took {:?}",
+        cached_duration
+    );
+
     // 3. Query models for codex
     let models = client
         .list_models("codex")
@@ -42,6 +56,20 @@ async fn test_live_zeron_mcp_handshake_and_tools() {
         .iter()
         .any(|m| m.id.contains("sol") || m.id.contains("gpt"));
     assert!(has_sol, "Expected GPT/Sol model in codex models");
+
+    // 3b. Query models again (verifying fast cache hit)
+    let t1 = std::time::Instant::now();
+    let models_cached = client
+        .list_models("codex")
+        .await
+        .expect("Failed to list cached models");
+    let models_cached_duration = t1.elapsed();
+    assert_eq!(models.len(), models_cached.len());
+    assert!(
+        models_cached_duration < std::time::Duration::from_millis(10),
+        "Cached models query should be near-instant (<10ms), took {:?}",
+        models_cached_duration
+    );
 
     // 4. Query projects
     let projects_res = client.list_projects().await;

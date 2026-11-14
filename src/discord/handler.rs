@@ -147,20 +147,22 @@ impl EventHandler for Handler {
                 }
                 Err(e) => {
                     error!(
-                        "Failed to register guild slash commands: {}. Attempting global registration fallback...",
+                        "Failed to register guild slash commands: {}",
                         e
                     );
-                    match serenity::all::Command::set_global_commands(&ctx.http, commands).await {
-                        Ok(registered) => {
-                            info!(
-                                "Registered {} global slash commands as fallback",
-                                registered.len()
-                            );
-                        }
-                        Err(ge) => {
-                            error!("Failed to register global slash commands: {}", ge);
-                        }
-                    }
+                }
+            }
+
+            info!("Synchronizing global slash commands to eliminate stale commands...");
+            match serenity::all::Command::set_global_commands(&ctx.http, commands).await {
+                Ok(registered) => {
+                    info!(
+                        "Synchronized {} global slash commands successfully",
+                        registered.len()
+                    );
+                }
+                Err(e) => {
+                    error!("Failed to synchronize global slash commands: {}", e);
                 }
             }
         } else {
@@ -258,7 +260,11 @@ impl EventHandler for Handler {
         match interaction {
             Interaction::Command(command) => {
                 let cmd_name = command.data.name.as_str();
-                debug!("Handling slash command: /{}", cmd_name);
+                info!(
+                    "Received slash command /{} from user {} ({}) in channel {}",
+                    cmd_name, command.user.name, command.user.id, command.channel_id
+                );
+                let start_time = std::time::Instant::now();
 
                 // Check if channel has an active session
                 let channel_id = command.channel_id.get();
@@ -303,12 +309,48 @@ impl EventHandler for Handler {
                     "help" => help::run(&ctx, &command).await,
                     _ => {
                         warn!("Unknown slash command: /{}", cmd_name);
+                        let resp = serenity::all::CreateInteractionResponseMessage::new()
+                            .content(format!("❌ Unknown command: `/{}`", cmd_name))
+                            .ephemeral(true);
+                        let _ = command
+                            .create_response(
+                                &ctx.http,
+                                serenity::all::CreateInteractionResponse::Message(resp),
+                            )
+                            .await;
                         Ok(())
                     }
                 };
 
+                let elapsed = start_time.elapsed();
                 if let Err(e) = res {
-                    error!("Error executing slash command /{}: {}", cmd_name, e);
+                    error!(
+                        "Error executing slash command /{} after {:?}: {}",
+                        cmd_name, elapsed, e
+                    );
+                    let err_text = format!("❌ Command `/{}` failed: {}", cmd_name, e);
+                    // Try to edit deferred response first
+                    let edit = serenity::all::EditInteractionResponse::new().content(&err_text);
+                    if let Err(edit_err) = command.edit_response(&ctx.http, edit).await {
+                        debug!(
+                            "edit_response failed ({}), attempting create_response fallback...",
+                            edit_err
+                        );
+                        let resp = serenity::all::CreateInteractionResponseMessage::new()
+                            .content(err_text)
+                            .ephemeral(true);
+                        let _ = command
+                            .create_response(
+                                &ctx.http,
+                                serenity::all::CreateInteractionResponse::Message(resp),
+                            )
+                            .await;
+                    }
+                } else {
+                    info!(
+                        "Slash command /{} completed successfully in {:?}",
+                        cmd_name, elapsed
+                    );
                 }
             }
 

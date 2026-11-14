@@ -2,7 +2,7 @@ use crate::error::BotResult;
 use crate::state::AppState;
 use serenity::all::{
     CommandInteraction, Context, CreateCommand, CreateEmbed, CreateInteractionResponse,
-    CreateInteractionResponseMessage,
+    CreateInteractionResponseFollowup, CreateInteractionResponseMessage,
 };
 use tracing::{info, warn};
 
@@ -95,14 +95,18 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
                 .color(0x5865F2);
 
             let resp = CreateInteractionResponseMessage::new()
-                .embed(embed)
+                .embed(embed.clone())
                 .ephemeral(true);
 
             if let Err(msg_err) = command
                 .create_response(&ctx.http, CreateInteractionResponse::Message(resp))
                 .await
             {
-                warn!("Failed to send fallback response for /magpie: {}", msg_err);
+                warn!("Failed to send initial fallback response for /magpie: {}. Attempting followup...", msg_err);
+                let followup = CreateInteractionResponseFollowup::new()
+                    .embed(embed)
+                    .ephemeral(true);
+                let _ = command.create_followup(&ctx.http, followup).await;
             }
 
             Ok(())
