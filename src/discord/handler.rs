@@ -147,22 +147,20 @@ impl EventHandler for Handler {
                 }
                 Err(e) => {
                     error!(
-                        "Failed to register guild slash commands: {}",
+                        "Failed to register guild slash commands: {}. Attempting global registration fallback...",
                         e
                     );
-                }
-            }
-
-            info!("Synchronizing global slash commands to eliminate stale commands...");
-            match serenity::all::Command::set_global_commands(&ctx.http, commands).await {
-                Ok(registered) => {
-                    info!(
-                        "Synchronized {} global slash commands successfully",
-                        registered.len()
-                    );
-                }
-                Err(e) => {
-                    error!("Failed to synchronize global slash commands: {}", e);
+                    match serenity::all::Command::set_global_commands(&ctx.http, commands).await {
+                        Ok(registered) => {
+                            info!(
+                                "Registered {} global slash commands as fallback",
+                                registered.len()
+                            );
+                        }
+                        Err(ge) => {
+                            error!("Failed to register global slash commands: {}", ge);
+                        }
+                    }
                 }
             }
         } else {
@@ -271,13 +269,14 @@ impl EventHandler for Handler {
                 let existing_session = self.state.get_session(channel_id).await;
                 let has_active_session = existing_session.as_ref().is_some_and(|s| !s.is_closed);
 
-                // Requirement 4: Don't allow any command other than /spawn, /resume, /help, /magpie, /terminal if no zeron session is linked
+                // Requirement 4: Don't allow any command other than /spawn, /resume, /help, /magpie, /terminal, /launch if no zeron session is linked
                 if !has_active_session
                     && cmd_name != "spawn"
                     && cmd_name != "resume"
                     && cmd_name != "help"
                     && cmd_name != "magpie"
                     && cmd_name != "terminal"
+                    && cmd_name != "launch"
                 {
                     let resp = serenity::all::CreateInteractionResponseMessage::new()
                         .content(
@@ -303,7 +302,7 @@ impl EventHandler for Handler {
                     "skills" => skills::run(&ctx, &command, &self.state).await,
                     "mcp" => mcp::run(&ctx, &command, &self.state).await,
                     "magpie" => magpie::run(&ctx, &command, &self.state).await,
-                    "terminal" => terminal::run(&ctx, &command, &self.state).await,
+                    "terminal" | "launch" => terminal::run(&ctx, &command, &self.state).await,
                     "status" => status::run(&ctx, &command, &self.state).await,
                     "interrupt" => interrupt::run(&ctx, &command, &self.state).await,
                     "help" => help::run(&ctx, &command).await,
