@@ -115,7 +115,7 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, state: &AppState) 
     // Requirement 1: on model change, don't send the "🤖 Model Updated" message. Only update the topic.
     // Acknowledge interaction silently (ephemeral)
     let edit = EditInteractionResponse::new().content(format!(
-        "✅ Channel topic updated to `{}/{}.{}`",
+        "-# Model changed to `{}/{}.{}`",
         harness_name,
         resolved_model,
         resolved_effort.as_deref().unwrap_or("default")

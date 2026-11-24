@@ -40,7 +40,12 @@ pub async fn notify_worker_launch_mode(
     channel_id: u64,
     mode: &str,
 ) -> Result<(), LaunchModeError> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .user_agent("zeron-dc-bot/1.0")
+        .connect_timeout(std::time::Duration::from_millis(800))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
     notify_worker_launch_mode_client(
         &client,
         state.config.magpie_url.as_deref(),
