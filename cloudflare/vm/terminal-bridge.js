@@ -21,6 +21,53 @@ const HOST = '127.0.0.1';
 const TERMINAL_SECRET = process.env.TERMINAL_SECRET;
 const SSH_HOST = process.env.TERMINAL_SSH_HOST || '127.0.0.1';
 const SSH_PORT = parseInt(process.env.TERMINAL_SSH_PORT || '22', 10) || 22;
+const PENDING_COMMAND_TTL_MS = 120 * 1000;
+const pendingCommands = new Map(); // channelId -> { command, expiresAt }
+
+function setPendingCommand(channelId, command) {
+  if (!channelId) return;
+  const cleanId = String(channelId).trim();
+  if (!cleanId) return;
+  if (typeof command === 'string' && command.trim().length > 0) {
+    pendingCommands.set(cleanId, {
+      command: command.trim(),
+      expiresAt: Date.now() + PENDING_COMMAND_TTL_MS,
+    });
+  } else {
+    pendingCommands.delete(cleanId);
+  }
+}
+
+function consumePendingCommand(channelId, headerEncodedCommand) {
+  const now = Date.now();
+  for (const [k, v] of pendingCommands.entries()) {
+    if (v.expiresAt <= now) {
+      pendingCommands.delete(k);
+    }
+  }
+
+  if (channelId) {
+    const cleanId = String(channelId).trim();
+    const entry = pendingCommands.get(cleanId);
+    if (entry) {
+      pendingCommands.delete(cleanId);
+      if (entry.expiresAt > now && entry.command) {
+        return entry.command;
+      }
+    }
+  }
+
+  if (typeof headerEncodedCommand === 'string' && headerEncodedCommand.trim().length > 0) {
+    try {
+      const decoded = Buffer.from(headerEncodedCommand.trim(), 'base64').toString('utf8').trim();
+      if (decoded.length > 0) {
+        return decoded;
+      }
+    } catch (_) {}
+  }
+
+  return null;
+}
 
 function safeCompare(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
@@ -295,6 +342,45 @@ const server = http.createServer((req, res) => {
 
   console.log(`[terminal-bridge] ${req.method} ${pathname}`);
 
+  if (
+    req.method === 'POST' &&
+    (pathname === '/__pending_command' || pathname === '/terminal/__pending_command')
+  ) {
+    const authHeader = req.headers['authorization'];
+    if (!isAuthorized(authHeader)) {
+      res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('Unauthorized');
+      return;
+    }
+
+    let rawBody = '';
+    req.on('data', (chunk) => {
+      if (rawBody.length < 16384) {
+        rawBody += chunk.toString('utf8');
+      }
+    });
+    req.on('end', () => {
+      try {
+        const parsed = JSON.parse(rawBody || '{}');
+        const channelId = parsed.channel_id ? String(parsed.channel_id).trim() : '';
+        if (!channelId) {
+          res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end('Missing channel_id');
+          return;
+        }
+        const cmd = typeof parsed.command === 'string' ? parsed.command.trim() : null;
+        setPendingCommand(channelId, cmd);
+        console.log(`[terminal-bridge] ${cmd ? 'Stored' : 'Cleared'} pending command for channel ${channelId}`);
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ success: true, channel_id: channelId, has_command: Boolean(cmd) }));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end(`Bad request: ${err.message}`);
+      }
+    });
+    return;
+  }
+
   if (req.method === 'GET' || req.method === 'HEAD') {
     if (pathname === '/terminal/xterm.js' || pathname === '/xterm.js') {
       if (XTERM_JS) {
@@ -421,15 +507,29 @@ wss.on('connection', (ws, req) => {
 
   console.log('[terminal-bridge] Authorized WebSocket connected. Spawning SSH...');
 
+  const reqUrl = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
+  const wsChannelId = req.headers['x-discord-channel-id'] || reqUrl.searchParams.get('channel_id');
+  const initialCommand = consumePendingCommand(wsChannelId, req.headers['x-terminal-command']);
+  if (initialCommand) {
+    console.log(`[terminal-bridge] Will auto-run initial command for channel ${wsChannelId || 'unknown'}`);
+  }
+
   let sshClient = null;
   let sshStream = null;
   let isClosed = false;
   let firstMessageReceived = false;
+  let initialCommandSent = false;
+  let initialCommandTimer = null;
   const pendingBuffer = [];
 
   function cleanup() {
     if (isClosed) return;
     isClosed = true;
+
+    if (initialCommandTimer) {
+      clearTimeout(initialCommandTimer);
+      initialCommandTimer = null;
+    }
 
     activeSockets.delete(ws);
 
@@ -544,6 +644,29 @@ wss.on('connection', (ws, req) => {
             } catch (_) {}
           }
           pendingBuffer.length = 0;
+        }
+
+        // Auto-run initial command from /terminal <command> once the shell prompt settles
+        if (initialCommand && !initialCommandSent) {
+          const dispatchInitialCommand = () => {
+            if (initialCommandSent || isClosed || !sshStream || !sshStream.writable) return;
+            initialCommandSent = true;
+            if (initialCommandTimer) {
+              clearTimeout(initialCommandTimer);
+              initialCommandTimer = null;
+            }
+            try {
+              sshStream.write(`${initialCommand}\r`);
+            } catch (_) {}
+          };
+
+          stream.once('data', () => {
+            if (!initialCommandSent && !isClosed) {
+              setTimeout(dispatchInitialCommand, 120);
+            }
+          });
+
+          initialCommandTimer = setTimeout(dispatchInitialCommand, 600);
         }
       }
 

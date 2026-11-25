@@ -107,8 +107,59 @@ function safeCloseWs(ws, code, reason) {
   }
 }
 
+// Encode UTF-8 text into base64 safely for HTTP header transport
+function toBase64Utf8(text) {
+  const bytes = new TextEncoder().encode(text);
+  let bin = "";
+  for (const b of bytes) {
+    bin += String.fromCharCode(b);
+  }
+  return btoa(bin);
+}
+
+// Extract Discord channel_id from request URL query params or Referer URL
+function extractChannelId(request, url) {
+  const direct = url.searchParams.get("channel_id")?.trim();
+  if (direct) return direct;
+
+  const referer = request.headers.get("Referer");
+  if (referer) {
+    try {
+      const refUrl = new URL(referer);
+      const fromRef = refUrl.searchParams.get("channel_id")?.trim();
+      if (fromRef) return fromRef;
+    } catch (_) {}
+  }
+  return null;
+}
+
+// Forward pending command directly to terminal bridge so it avoids KV edge-cache delays
+async function pushPendingCommandToBridge(env, channelId, command) {
+  if (!env.TERMINAL_SECRET) return;
+  const terminalOrigin = (await env.TERMINAL_KV?.get("origin_url"))
+    || (await env.MAGPIE_KV?.get("terminal_origin_url"))
+    || env.TERMINAL_ORIGIN;
+  if (!terminalOrigin) return;
+
+  try {
+    const endpoint = new URL("/__pending_command", terminalOrigin);
+    await fetch(endpoint.toString(), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${env.TERMINAL_SECRET}`,
+      },
+      body: JSON.stringify({
+        channel_id: channelId,
+        command: command || null,
+      }),
+      signal: AbortSignal.timeout(600),
+    });
+  } catch (_) {}
+}
+
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     // 1. Health check (GET /__status)
@@ -213,7 +264,7 @@ export default {
         });
       }
 
-      const { channel_id, mode } = payload || {};
+      const { channel_id, mode, command } = payload || {};
 
       // Validate channel_id: Discord snowflake (string of 15-22 digits)
       if (
@@ -237,6 +288,27 @@ export default {
         });
       }
 
+      // Validate optional initial terminal command
+      let cleanCommand = null;
+      if (command !== undefined && command !== null) {
+        if (typeof command !== "string") {
+          return new Response("Invalid command", {
+            status: 400,
+            headers: { "Cache-Control": "no-store" },
+          });
+        }
+        const trimmedCmd = command.trim();
+        if (trimmedCmd.length > 1000) {
+          return new Response("Command too long", {
+            status: 400,
+            headers: { "Cache-Control": "no-store" },
+          });
+        }
+        if (trimmedCmd.length > 0) {
+          cleanCommand = trimmedCmd;
+        }
+      }
+
       // Check mode store availability
       const kv = env.TERMINAL_KV || env.MAGPIE_KV;
       if (!kv) {
@@ -246,8 +318,24 @@ export default {
         });
       }
 
+      const cmdKey = `channel_command:${cleanChannelId}`;
+
       try {
-        await kv.put(`channel_mode:${cleanChannelId}`, mode, { expirationTtl: 3600 });
+        const ops = [kv.put(`channel_mode:${cleanChannelId}`, mode, { expirationTtl: 3600 })];
+
+        if (mode === "terminal" && cleanCommand) {
+          ops.push(kv.put(cmdKey, cleanCommand, { expirationTtl: 120 }));
+          ops.push(pushPendingCommandToBridge(env, cleanChannelId, cleanCommand));
+        } else {
+          if (typeof kv.delete === "function") {
+            ops.push(kv.delete(cmdKey));
+          }
+          if (typeof ctx?.waitUntil === "function") {
+            ctx.waitUntil(pushPendingCommandToBridge(env, cleanChannelId, null));
+          }
+        }
+
+        await Promise.all(ops);
       } catch (putErr) {
         return new Response(`Failed to persist launch mode: ${putErr.message}`, {
           status: 500,
@@ -260,20 +348,22 @@ export default {
       // where two channels concurrently launching different activities cross-contaminate.
       // Each channel is strictly isolated by channel_id.
 
-      return Response.json(
-        {
-          success: true,
-          channel_id: cleanChannelId,
-          mode,
+      const respPayload = {
+        success: true,
+        channel_id: cleanChannelId,
+        mode,
+      };
+      if (mode === "terminal" && cleanCommand) {
+        respPayload.command = cleanCommand;
+      }
+
+      return Response.json(respPayload, {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
         },
-        {
-          status: 200,
-          headers: {
-            "Content-Type": "application/json",
-            "Cache-Control": "no-store",
-          },
-        }
-      );
+      });
     }
 
     // 3. Security gate: Block all direct public internet access
@@ -403,6 +493,22 @@ export default {
         wsHeaders.set("Authorization", `Bearer ${env.TERMINAL_SECRET}`);
       }
 
+      const kv = env.TERMINAL_KV || env.MAGPIE_KV;
+      const wsChannelId = extractChannelId(request, url);
+      let wsCommandKey = null;
+      if (wsChannelId) {
+        wsHeaders.set("X-Discord-Channel-Id", wsChannelId);
+        if (kv) {
+          wsCommandKey = `channel_command:${wsChannelId}`;
+          try {
+            const pendingCmd = await kv.get(wsCommandKey);
+            if (pendingCmd) {
+              wsHeaders.set("X-Terminal-Command", toBase64Utf8(pendingCmd));
+            }
+          } catch (_) {}
+        }
+      }
+
       try {
         const backendResponse = await fetch(wsUrl.toString(), {
           headers: wsHeaders,
@@ -411,6 +517,12 @@ export default {
         const backendWs = backendResponse.webSocket;
         if (!backendWs) {
           return backendResponse;
+        }
+
+        if (wsCommandKey && kv && typeof kv.delete === "function") {
+          try {
+            await kv.delete(wsCommandKey);
+          } catch (_) {}
         }
 
         const pair = new WebSocketPair();

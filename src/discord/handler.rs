@@ -361,6 +361,7 @@ impl EventHandler for Handler {
                     "spawn" => spawn::autocomplete(&ctx, &autocomplete, &self.state).await,
                     "model" => model::autocomplete(&ctx, &autocomplete, &self.state).await,
                     "effort" => effort::autocomplete(&ctx, &autocomplete, &self.state).await,
+                    "terminal" => terminal::autocomplete(&ctx, &autocomplete, &self.state).await,
                     _ => Ok(()),
                 };
 

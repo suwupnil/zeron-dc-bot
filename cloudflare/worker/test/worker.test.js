@@ -580,4 +580,93 @@ describe("Cloudflare Worker Activity Switcher Tests", () => {
       }
     });
   });
+
+  describe("6. Initial Terminal Command Coordination", () => {
+    it("stores command in KV and forwards to terminal bridge on POST /__set_launch_mode", async () => {
+      const kv = createMockKv({ "origin_url": "https://terminal.backend.local" });
+      const env = { ...DEFAULT_ENV, TERMINAL_KV: kv };
+      const originalFetch = globalThis.fetch;
+      const forwarded = [];
+
+      globalThis.fetch = async (url, init) => {
+        forwarded.push({ url: String(url), init });
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+      };
+
+      try {
+        const req = new Request("https://worker.local/__set_launch_mode", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${DEFAULT_ENV.UPDATE_SECRET}`,
+          },
+          body: JSON.stringify({
+            channel_id: "123456789012345678",
+            mode: "terminal",
+            command: "  htop  ",
+          }),
+        });
+
+        const res = await worker.fetch(req, env);
+        assert.equal(res.status, 200);
+        const data = await res.json();
+        assert.deepEqual(data, {
+          success: true,
+          channel_id: "123456789012345678",
+          mode: "terminal",
+          command: "htop",
+        });
+        assert.equal(await kv.get("channel_command:123456789012345678"), "htop");
+        assert.equal(forwarded.length, 1);
+        assert.equal(forwarded[0].url, "https://terminal.backend.local/__pending_command");
+        assert.equal(forwarded[0].init.headers.Authorization, `Bearer ${DEFAULT_ENV.TERMINAL_SECRET}`);
+        assert.deepEqual(JSON.parse(forwarded[0].init.body), {
+          channel_id: "123456789012345678",
+          command: "htop",
+        });
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("clears previous channel_command when launching terminal without command", async () => {
+      const kv = createMockKv({ "channel_command:123456789012345678": "htop" });
+      const env = { ...DEFAULT_ENV, TERMINAL_KV: kv };
+
+      const req = new Request("https://worker.local/__set_launch_mode", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${DEFAULT_ENV.UPDATE_SECRET}`,
+        },
+        body: JSON.stringify({
+          channel_id: "123456789012345678",
+          mode: "terminal",
+        }),
+      });
+
+      const res = await worker.fetch(req, env);
+      assert.equal(res.status, 200);
+      assert.equal(await kv.get("channel_command:123456789012345678"), null);
+    });
+
+    it("rejects non-string command in /__set_launch_mode with 400", async () => {
+      const env = { ...DEFAULT_ENV, TERMINAL_KV: createMockKv() };
+      const req = new Request("https://worker.local/__set_launch_mode", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${DEFAULT_ENV.UPDATE_SECRET}`,
+        },
+        body: JSON.stringify({
+          channel_id: "123456789012345678",
+          mode: "terminal",
+          command: 123,
+        }),
+      });
+
+      const res = await worker.fetch(req, env);
+      assert.equal(res.status, 400);
+    });
+  });
 });
