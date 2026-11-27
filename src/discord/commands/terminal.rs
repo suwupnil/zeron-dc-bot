@@ -61,6 +61,55 @@ pub async fn notify_worker_launch_mode(
     notify_worker_launch_mode_with_command(state, channel_id, mode, None).await
 }
 
+async fn push_pending_command_local(
+    client: &reqwest::Client,
+    bridge_url: &str,
+    terminal_secret: Option<&str>,
+    channel_id: u64,
+    command: Option<&str>,
+) {
+    let secret = match terminal_secret {
+        Some(s) if !s.trim().is_empty() => s.trim(),
+        _ => return,
+    };
+
+    let endpoint = format!("{}/__pending_command", bridge_url.trim_end_matches('/'));
+    let clean_cmd = command.map(str::trim).filter(|s| !s.is_empty());
+    let body = serde_json::json!({
+        "channel_id": channel_id.to_string(),
+        "command": clean_cmd,
+    });
+
+    match client
+        .post(&endpoint)
+        .header("Authorization", format!("Bearer {}", secret))
+        .json(&body)
+        .timeout(std::time::Duration::from_millis(500))
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            info!(
+                "Synced pending terminal command directly to bridge (channel_id={}, has_command={})",
+                channel_id,
+                clean_cmd.is_some()
+            );
+        }
+        Ok(resp) => {
+            warn!(
+                "Local terminal bridge rejected /__pending_command (status={})",
+                resp.status()
+            );
+        }
+        Err(e) => {
+            warn!(
+                "Could not reach local terminal bridge at {}: {}",
+                endpoint, e
+            );
+        }
+    }
+}
+
 pub async fn notify_worker_launch_mode_with_command(
     state: &AppState,
     channel_id: u64,
@@ -68,21 +117,37 @@ pub async fn notify_worker_launch_mode_with_command(
     command: Option<&str>,
 ) -> Result<(), LaunchModeError> {
     let deadline = std::time::Duration::from_millis(1600);
-    match tokio::time::timeout(
-        deadline,
-        notify_worker_launch_mode_client_with_command(
+    let worker_fut = notify_worker_launch_mode_client_with_command(
+        &state.http_client,
+        state.config.magpie_url.as_deref(),
+        state.config.update_secret.as_deref(),
+        channel_id,
+        mode,
+        command,
+    );
+
+    if mode == "terminal" {
+        let local_fut = push_pending_command_local(
             &state.http_client,
-            state.config.magpie_url.as_deref(),
-            state.config.update_secret.as_deref(),
+            &state.config.terminal_bridge_url,
+            state.config.terminal_secret.as_deref(),
             channel_id,
-            mode,
             command,
-        ),
-    )
-    .await
-    {
-        Ok(res) => res,
-        Err(_) => Err(LaunchModeError::Timeout(deadline)),
+        );
+        match tokio::time::timeout(deadline, async {
+            let (worker_res, _) = tokio::join!(worker_fut, local_fut);
+            worker_res
+        })
+        .await
+        {
+            Ok(res) => res,
+            Err(_) => Err(LaunchModeError::Timeout(deadline)),
+        }
+    } else {
+        match tokio::time::timeout(deadline, worker_fut).await {
+            Ok(res) => res,
+            Err(_) => Err(LaunchModeError::Timeout(deadline)),
+        }
     }
 }
 

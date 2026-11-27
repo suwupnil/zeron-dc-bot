@@ -20,6 +20,8 @@ pub struct Config {
     pub cloudflare_ai_endpoint: Option<String>,
     pub magpie_url: Option<String>,
     pub update_secret: Option<String>,
+    pub terminal_bridge_url: String,
+    pub terminal_secret: Option<String>,
     pub media_cache_dir: PathBuf,
     pub media_max_image_bytes: u64,
     pub media_max_audio_bytes: u64,
@@ -102,6 +104,13 @@ impl Config {
         let cloudflare_ai_endpoint = std::env::var("CLOUDFLARE_AI_ENDPOINT").ok();
         let magpie_url = std::env::var("MAGPIE_URL").ok();
         let update_secret = std::env::var("UPDATE_SECRET").ok();
+        let terminal_bridge_url = std::env::var("TERMINAL_BRIDGE_URL")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "http://127.0.0.1:7681".to_string());
+        let terminal_secret = std::env::var("TERMINAL_SECRET")
+            .ok()
+            .filter(|s| !s.trim().is_empty());
 
         let media_cache_dir = std::env::var("MEDIA_CACHE_DIR")
             .map(|s| {
@@ -173,6 +182,8 @@ impl Config {
             cloudflare_ai_endpoint,
             magpie_url,
             update_secret,
+            terminal_bridge_url,
+            terminal_secret,
             media_cache_dir,
             media_max_image_bytes,
             media_max_audio_bytes,

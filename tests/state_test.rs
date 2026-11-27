@@ -23,6 +23,8 @@ fn make_test_config(storage_path: PathBuf) -> Config {
         cloudflare_ai_endpoint: None,
         magpie_url: None,
         update_secret: None,
+        terminal_bridge_url: "http://127.0.0.1:7681".to_string(),
+        terminal_secret: None,
         media_cache_dir: PathBuf::from("./media_cache"),
         media_max_image_bytes: 25_000_000,
         media_max_audio_bytes: 25_000_000,
