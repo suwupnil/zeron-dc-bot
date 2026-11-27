@@ -70,6 +70,7 @@ pub struct AppState {
     pub config: Config,
     pub zeron: ZeronClient,
     pub decision: DecisionClient,
+    pub http_client: reqwest::Client,
     pub sessions: Arc<RwLock<HashMap<u64, SessionData>>>,
     pub preferences: Arc<RwLock<Preferences>>,
     storage_path: PathBuf,
@@ -90,10 +91,16 @@ impl AppState {
             config.cloudflare_ai_endpoint.clone(),
         )
         .with_refresh_token(config.cloudflare_refresh_token.clone());
+        let http_client = reqwest::Client::builder()
+            .user_agent("zeron-dc-bot/1.0")
+            .connect_timeout(std::time::Duration::from_millis(800))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             config,
             zeron,
             decision,
+            http_client,
             sessions: Arc::new(RwLock::new(HashMap::new())),
             preferences: Arc::new(RwLock::new(Preferences::default())),
             storage_path,

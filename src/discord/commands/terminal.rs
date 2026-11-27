@@ -27,6 +27,9 @@ pub enum LaunchModeError {
         endpoint: String,
         source: reqwest::Error,
     },
+
+    #[error("Timed out communicating with worker after {0:?}")]
+    Timeout(std::time::Duration),
 }
 
 fn is_transient_network_error(err: &reqwest::Error) -> bool {
@@ -64,21 +67,23 @@ pub async fn notify_worker_launch_mode_with_command(
     mode: &str,
     command: Option<&str>,
 ) -> Result<(), LaunchModeError> {
-    let client = reqwest::Client::builder()
-        .user_agent("zeron-dc-bot/1.0")
-        .connect_timeout(std::time::Duration::from_millis(800))
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
-
-    notify_worker_launch_mode_client_with_command(
-        &client,
-        state.config.magpie_url.as_deref(),
-        state.config.update_secret.as_deref(),
-        channel_id,
-        mode,
-        command,
+    let deadline = std::time::Duration::from_millis(1600);
+    match tokio::time::timeout(
+        deadline,
+        notify_worker_launch_mode_client_with_command(
+            &state.http_client,
+            state.config.magpie_url.as_deref(),
+            state.config.update_secret.as_deref(),
+            channel_id,
+            mode,
+            command,
+        ),
     )
     .await
+    {
+        Ok(res) => res,
+        Err(_) => Err(LaunchModeError::Timeout(deadline)),
+    }
 }
 
 pub async fn notify_worker_launch_mode_client(
