@@ -195,3 +195,50 @@ async fn test_state_close_and_resume_marking() {
     assert!(s.is_closed);
     assert_eq!(s.origin, SessionOrigin::Spawn);
 }
+
+#[tokio::test]
+async fn test_take_handoff_context_does_not_deadlock() {
+    let temp_dir = tempdir().unwrap();
+    let session_file = temp_dir.path().join("sessions.json");
+    let config = make_test_config(session_file);
+    let zeron = ZeronClient::new(&config.zeron_path);
+    let state = AppState::new(config, zeron);
+
+    {
+        let mut map = state.sessions.write().await;
+        map.insert(
+            424242,
+            SessionData {
+                chat_id: "chat-handoff".to_string(),
+                kind: "chat".to_string(),
+                parent_chat_id: None,
+                channel_id: 424242,
+                parent_channel_id: None,
+                guild_id: None,
+                title: "#handoff".to_string(),
+                project_dir: "/tmp/handoff".to_string(),
+                harness: "codex".to_string(),
+                model: None,
+                effort: None,
+                created_at: 4000,
+                last_active_at: 4000,
+                origin: SessionOrigin::Spawn,
+                is_closed: false,
+                handoff_context: Some("previous summary".to_string()),
+            },
+        );
+    }
+
+    let ctx = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        state.take_handoff_context(424242),
+    )
+    .await
+    .expect("take_handoff_context should not deadlock");
+    assert_eq!(ctx.as_deref(), Some("previous summary"));
+
+    // Subsequent read & take must also complete immediately without deadlock
+    let s = state.get_session(424242).await.unwrap();
+    assert_eq!(s.handoff_context, None);
+    assert_eq!(state.take_handoff_context(424242).await, None);
+}

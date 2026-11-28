@@ -914,16 +914,15 @@ Tool calls or actions from earlier ran on the previous provider; continue natura
 
     /// Retrieve and clear any pending handoff context for the given channel.
     pub async fn take_handoff_context(&self, channel_id: u64) -> Option<String> {
-        let mut map = self.sessions.write().await;
-        if let Some(session) = map.get_mut(&channel_id) {
-            let ctx = session.handoff_context.take();
-            if ctx.is_some() {
-                let _ = self.save_sessions().await;
-            }
-            ctx
-        } else {
-            None
+        let ctx = {
+            let mut map = self.sessions.write().await;
+            map.get_mut(&channel_id)
+                .and_then(|session| session.handoff_context.take())
+        };
+        if ctx.is_some() {
+            let _ = self.save_sessions().await;
         }
+        ctx
     }
 
     /// Reset / recreate a session for a channel or thread

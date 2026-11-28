@@ -264,33 +264,32 @@ impl EventHandler for Handler {
                 );
                 let start_time = std::time::Instant::now();
 
-                // Check if channel has an active session
-                let channel_id = command.channel_id.get();
-                let existing_session = self.state.get_session(channel_id).await;
-                let has_active_session = existing_session.as_ref().is_some_and(|s| !s.is_closed);
-
                 // Requirement 4: Don't allow any command other than /spawn, /resume, /help, /magpie, /terminal, /launch if no zeron session is linked
-                if !has_active_session
-                    && cmd_name != "spawn"
-                    && cmd_name != "resume"
-                    && cmd_name != "help"
-                    && cmd_name != "magpie"
-                    && cmd_name != "terminal"
-                    && cmd_name != "launch"
-                {
-                    let resp = serenity::all::CreateInteractionResponseMessage::new()
-                        .content(
-                            "❌ No active Zeron session linked with this channel.\n\
-                             Please use `/spawn <directory>` to start a new session or `/resume [session_id]` to resume one.",
-                        )
-                        .ephemeral(true);
-                    let _ = command
-                        .create_response(
-                            &ctx.http,
-                            serenity::all::CreateInteractionResponse::Message(resp),
-                        )
-                        .await;
-                    return;
+                let requires_session = !matches!(
+                    cmd_name,
+                    "spawn" | "resume" | "help" | "magpie" | "terminal" | "launch"
+                );
+                if requires_session {
+                    let channel_id = command.channel_id.get();
+                    let existing_session = self.state.get_session(channel_id).await;
+                    let has_active_session =
+                        existing_session.as_ref().is_some_and(|s| !s.is_closed);
+
+                    if !has_active_session {
+                        let resp = serenity::all::CreateInteractionResponseMessage::new()
+                            .content(
+                                "❌ No active Zeron session linked with this channel.\n\
+                                 Please use `/spawn <directory>` to start a new session or `/resume [session_id]` to resume one.",
+                            )
+                            .ephemeral(true);
+                        let _ = command
+                            .create_response(
+                                &ctx.http,
+                                serenity::all::CreateInteractionResponse::Message(resp),
+                            )
+                            .await;
+                        return;
+                    }
                 }
 
                 let res = match cmd_name {
